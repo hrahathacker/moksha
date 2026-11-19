@@ -1,4 +1,5 @@
-import { CHAPTER_CONFIGS, ChapterNumber, Difficulty } from './types';
+import { CHAPTER_CONFIGS, FINAL_CHAPTER_ID, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
+import { ChapterNumber, Difficulty } from './types';
 
 export interface ReportCardStats {
   victory: boolean;
@@ -68,12 +69,12 @@ export function getIndianRankTitle(stats: ReportCardStats): {
 
 export function buildWhatsAppChallengeText(stats: ReportCardStats): string {
   const rank = getIndianRankTitle(stats);
-  const ch = stats.chapter ?? 5;
-  const chName = CHAPTER_CONFIGS[ch].title;
+  const ch = stats.chapter ?? FINAL_CHAPTER_ID;
+  const chName = CHAPTER_CONFIGS[ch]?.title ?? `Chapter ${ch}`;
   const progress = stats.chapterProgress ?? stats.itemsPlacedCount;
   const target = stats.chapterTarget ?? 4;
   const status = stats.victory
-    ? `I completed all 5 chapters of MOKSHA: The Last Ritual in ${formatTime(stats.elapsedSeconds)} (${stats.difficulty.toUpperCase()})!`
+    ? `I completed all ${TOTAL_CHAPTERS} chapters of MOKSHA: The Last Ritual in ${formatTime(stats.elapsedSeconds)} (${stats.difficulty.toUpperCase()})!`
     : `The haveli spirit caught me in Chapter ${ch} (${chName}) after ${formatTime(stats.elapsedSeconds)} (${progress}/${target})!`;
 
   return `${status}\nRank: ${rank.title}\nMax Heartbeat: ${stats.maxBpm} BPM\nClose Calls Survived: ${stats.jumpscaresSurvived}\n\nCan you survive the 1984 Indian Haveli and beat my score? Play MOKSHA: The Last Ritual!`;
@@ -245,15 +246,15 @@ export function generateReportCardDataUrl(stats: ReportCardStats): string {
   });
 
   // Chapter & Task Progress Strip
-  const chNum = stats.chapter ?? 5;
-  const chTitle = CHAPTER_CONFIGS[chNum].title.toUpperCase();
+  const chNum = stats.chapter ?? FINAL_CHAPTER_ID;
+  const chTitle = (CHAPTER_CONFIGS[chNum]?.title ?? `Chapter ${chNum}`).toUpperCase();
   const prog = stats.chapterProgress ?? stats.itemsPlacedCount;
   const targ = stats.chapterTarget ?? 4;
   const taskLbl = (stats.chapterTaskLabel ?? 'RITUAL ITEMS').toUpperCase();
   ctx.textAlign = 'center';
   ctx.fillStyle = '#9aa8a6';
   ctx.font = '600 26px "DM Sans", sans-serif';
-  ctx.fillText(`CH ${chNum}/5 · ${chTitle} · ${taskLbl}: ${prog}/${targ}`, width / 2, 1510);
+  ctx.fillText(`CH ${chNum}/${TOTAL_CHAPTERS} · ${chTitle} · ${taskLbl}: ${prog}/${targ}`, width / 2, 1510);
 
   // Decorative ECG heartbeat line across bottom section
   ctx.strokeStyle = stats.victory ? 'rgba(234, 179, 84, 0.55)' : 'rgba(224, 72, 72, 0.65)';

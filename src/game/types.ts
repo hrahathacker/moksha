@@ -6,12 +6,15 @@ export type GamePhase =
   | 'paused'
   | 'note'
   | 'climax'
+  | 'injured'
   | 'chapter_complete'
   | 'victory'
   | 'jumpscare'
   | 'gameover';
 
-export type ChapterNumber = 1 | 2 | 3 | 4 | 5;
+export type ChapterNumber = number;
+
+export type ChapterEnvironment = 'outdoor' | 'haveli';
 
 export type Difficulty = 'normal' | 'nightmare' | 'speedrun';
 
@@ -53,6 +56,7 @@ export interface ChapterConfig {
   id: ChapterNumber;
   title: string;
   hindiTitle: string;
+  environment: ChapterEnvironment;
   shortTask: string;
   taskLabel: string;
   targetCount: number;
@@ -62,189 +66,39 @@ export interface ChapterConfig {
   completionText: string;
 }
 
-export const CHAPTER_CONFIGS: Record<ChapterNumber, ChapterConfig> = {
-  1: {
-    id: 1,
-    title: 'Andhere Ki Shuruwat',
-    hindiTitle: 'अंधेरे की शुरुआत',
-    shortTask: 'Light all 5 extinguished Shrine Diyas across the Haveli',
-    taskLabel: 'Shrine Diyas Lit',
-    targetCount: 5,
-    ghostSpeedMult: 0.84,
-    briefingIntro:
-      'Haveli ke 5 pavitra mitti ke diye aatma ne bujha diye hain. Un sabhi ko dobara jalakar andhere ka parda todein.',
-    steps: [
-      {
-        heading: '01. FIND 5 UNLIT SHRINE DIYAS',
-        detail:
-          'Aangan, Pooja Room, Master Bedroom, Old Kitchen aur Storeroom mein 5 bujhe diye rakhe hain. Map par peele (amber) nishan dekhein.',
-      },
-      {
-        heading: '02. PRESS E TO LIGHT EACH DIYA',
-        detail:
-          'Har bujhe diye ke paas jaakar E dabayein. Sabhi 5 diye jalte hi Chapter 1 poora ho jayega.',
-      },
-      {
-        heading: '03. TRACK THE GHOST ON THE MAP',
-        detail:
-          'Screen par bane Haveli Map mein laal (red) nishan bhoot ki asli location dikhata hai. Usse door rahkar aage badhein.',
-      },
-      {
-        heading: '04. HIDE IN ALMIRAHS WHEN CLOSE',
-        detail:
-          'Agar payal ki aawaz paas aaye toh Torch band (F) karein aur lakdi ki Almirah mein E dabakar chhup jayein.',
-      },
-    ],
-    completionText: 'Paanchon diye jal uthe hain... ab haveli ke 1984 ke purane raaz saamne aane lage hain.',
-  },
-  2: {
-    id: 2,
-    title: '1984 Ka Raaz',
-    hindiTitle: '1984 का राज़',
-    shortTask: 'Inspect 4 hidden 1984 Diary Clues, then decode at Havan Kund',
-    taskLabel: 'Clues & Mantra',
-    targetCount: 5,
-    ghostSpeedMult: 0.94,
-    briefingIntro:
-      'Is shraap ko samajhne ke liye 1984 ke 4 chhupe hue khat (clues) padhein, phir Havan Kund par aakar Pandit ji ka mantra suljhayein.',
-    steps: [
-      {
-        heading: '01. READ ALL 4 1984 LORE NOTES',
-        detail:
-          'Veranda, Pooja Room, Master Bedroom aur Old Kitchen mein chamakte hue 4 purane kagaz rakhe hain. E dabakar sabhi padhein.',
-      },
-      {
-        heading: '02. BEWARE: READING ALERTS HER',
-        detail:
-          'Har purana khat padhte hi aatma us kamre ki taraf ghoomne aati hai. Map par uski location dekhkar surakshit rasta chunein.',
-      },
-      {
-        heading: '03. DECODE MANTRA AT HAVAN KUND',
-        detail:
-          'Chaaron notes padhne ke baad beech wale Central Aangan ke Havan Kund par aakar E dabayein.',
-      },
-      {
-        heading: '04. USE ALMIRAHS & CORRIDOR LOOPS',
-        detail:
-          'Haveli ke charon konon mein arched corridors hain — bhoot se bachne ke liye unse ghoomkar nikal sakte hain.',
-      },
-    ],
-    completionText: '1984 ka poora sach samajh aa gaya... ab mandir ki ghantiyon se aatma ka krodh shaant karna hoga.',
-  },
-  3: {
-    id: 3,
-    title: 'Mandir Ki Ghantiyan',
-    hindiTitle: 'मंदिर की घंटियाँ',
-    shortTask: 'Ring 4 Hanging Temple Bells in exact sacred sequence (N → W → E → S)',
-    taskLabel: 'Sacred Bells Rung',
-    targetCount: 4,
-    ghostSpeedMult: 1.0,
-    briefingIntro:
-      'Chaar pavitra peetal ki ghantiyan sahi kram (Pooja → Bedroom → Kitchen → Storeroom) mein bajani hain. Har ghanti ki goonj bhoot ko bula legi!',
-    steps: [
-      {
-        heading: '01. FOLLOW THE EXACT SEQUENCE',
-        detail:
-          'Pehle Pooja Room (1), phir Master Bedroom (2), phir Old Kitchen (3), aur aakhir mein Storeroom (4) ki latakti ghanti bajayein.',
-      },
-      {
-        heading: '02. RING & ESCAPE IMMEDIATELY',
-        detail:
-          'Ghanti bajate hi uski tez aawaz sunke aatma seedha usi kamre ki taraf daudegi! Turant almirah mein chhupein ya doosre corridor se bhaagein.',
-      },
-      {
-        heading: '03. WATCH THE ACTIVE GOLD TARGET',
-        detail:
-          'Haveli Map par agli sahi ghanti chamak rahi hogi, aur kamre mein uske neeche sunehra ghera dikhega.',
-      },
-      {
-        heading: '04. KEEP TORCH OFF WHILE HIDING',
-        detail:
-          'Almirah ke andar jaate hi Torch band (F) kar dein warna aatma roshni dekh legi.',
-      },
-    ],
-    completionText: 'Chaaron ghantiyon ki pavitra goonj haveli mein fail gayi hai... ab kaale jaadu ke bandhan todne ka waqt hai.',
-  },
-  4: {
-    id: 4,
-    title: 'Bandhan Todna',
-    hindiTitle: 'बंधन तोड़ना',
-    shortTask: 'Find & shatter 4 Cursed Crimson Tantrik Seals binding the spirit',
-    taskLabel: 'Cursed Seals Broken',
-    targetCount: 4,
-    ghostSpeedMult: 1.06,
-    briefingIntro:
-      'Chaar laal tantrik bandhan (Cursed Seals) dulhan ki aatma ko is haveli mein qaid kiye hue hain. Un sabhi ko dhoondh kar E se tod dein.',
-    steps: [
-      {
-        heading: '01. LOCATE 4 CRIMSON SEALS',
-        detail:
-          'Pooja Room, Master Bedroom, Old Kitchen aur Storeroom ke konon mein laal chamakte tantrik seals lage hain.',
-      },
-      {
-        heading: '02. SHATTER EACH SEAL WITH E',
-        detail:
-          'Har cursed seal ke paas jaakar E dabayein. Seal tootne par tez dhamaka hoga aur aatma bhadak uthegi!',
-      },
-      {
-        heading: '03. OUTSMART THE ENRAGED SPIRIT',
-        detail:
-          'Seal todne ke baad live Ghost Map dekhein aur jab aatma us taraf aaye toh ulte raste se agle kamre mein jayein.',
-      },
-      {
-        heading: '04. PREPARE FOR THE FINAL RITUAL',
-        detail:
-          'Chaaron bandhan toot-te hi Chapter 5 (Aakhiri Havan — MOKSHA) ka dwar khul jayega.',
-      },
-    ],
-    completionText: 'Sabhi kaale bandhan toot chuke hain! Ab sirf Aakhiri Havan hi dulhan ki aatma ko Moksha dila sakta hai.',
-  },
-  5: {
-    id: 5,
-    title: 'Aakhiri Havan — MOKSHA',
-    hindiTitle: 'आखिरी हवन — मोक्ष',
-    shortTask: 'Offer 4 Sacred Ritual Items at Havan Kund & survive the Final Havan',
-    taskLabel: 'Ritual Offerings',
-    targetCount: 4,
-    ghostSpeedMult: 1.1,
-    briefingIntro:
-      'Aakhiri adhyay! Chaaron pavitra samagri (Kalash, Chunri, Diya, Samagri) Havan Kund mein arpit karein aur aakhiri havan poora hone tak khud ko bachayein.',
-    steps: [
-      {
-        heading: '01. COLLECT 4 SACRED OFFERINGS',
-        detail:
-          'Brass Kalash, Red Chunri, Glowing Brass Diya aur Havan Samagri Bowl chaaron kamron ke tables par rakhe hain. Ek baar mein ek uthayein (E).',
-      },
-      {
-        heading: '02. OFFER AT CENTRAL HAVAN KUND',
-        detail:
-          'Har samagri ko Central Aangan ke Havan Kund par laakar E se arpit karein.',
-      },
-      {
-        heading: '03. SURVIVE THE FINAL CLIMAX',
-        detail:
-          'Chauthi samagri rakhte hi Havan Kund jal uthega aur aatma aakhiri hamla karegi! Countdown khatam hone tak zinda rahein.',
-      },
-      {
-        heading: '04. WITNESS MOKSHA & VICTORY SONG',
-        detail:
-          'Countdown poora hote hi sunehri roshni mein aatma ko shanti milegi aur game ka original Moksha Geet chalega!',
-      },
-    ],
-    completionText: 'Aakhiri Havan sampann hua! Dulhan ki aatma ko sada ke liye Moksha aur Shanti mil gayi.',
-  },
-};
-
 export interface MinimapObjective {
   id: string;
   x: number;
   z: number;
   label: string;
-  kind: 'diya' | 'note' | 'bell' | 'seal' | 'item' | 'kund';
+  kind:
+    | 'diya'
+    | 'note'
+    | 'bell'
+    | 'seal'
+    | 'item'
+    | 'kund'
+    | 'dog'
+    | 'biscuit'
+    | 'well'
+    | 'pulley'
+    | 'tulsi'
+    | 'veranda'
+    | 'key'
+    | 'gate';
   urgent?: boolean;
 }
 
+export interface MinimapLandmark {
+  id: string;
+  x: number;
+  z: number;
+  label: string;
+  kind: 'hut' | 'stall' | 'well' | 'shed' | 'tulsi' | 'gate' | 'hazard';
+}
+
 export interface MinimapData {
+  mode: 'haveli' | 'outdoor';
   playerX: number;
   playerZ: number;
   playerYaw: number;
@@ -255,6 +109,11 @@ export interface MinimapData {
   ghostDistance: number;
   objectives: MinimapObjective[];
   almirahs: Array<{ id: string; x: number; z: number }>;
+  dogX?: number;
+  dogZ?: number;
+  pawTrailVisible?: boolean;
+  pawTrail?: Array<{ x: number; z: number }>;
+  landmarks?: MinimapLandmark[];
 }
 
 export interface RitualItemMeta {
@@ -336,6 +195,8 @@ export interface DifficultyConfig {
 export interface HudSnapshot {
   phase: GamePhase;
   chapter: ChapterNumber;
+  totalChapters: number;
+  isOutdoor: boolean;
   chapterProgress: number;
   chapterTarget: number;
   chapterTaskLabel: string;
@@ -343,6 +204,11 @@ export interface HudSnapshot {
   itemsPlacedCount: number;
   placedItems: RitualItemId[];
   holdingItem: RitualItemMeta | null;
+  playerHealth: number; // 0..100
+  damageFlash: number; // 0..1
+  checkpointBanner: string | null;
+  injuredReason: string | null;
+  activeCheckpointLabel: string;
   stamina: number; // 0..100
   battery: number; // 0..100
   flashlightOn: boolean;

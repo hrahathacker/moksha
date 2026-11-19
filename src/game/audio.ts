@@ -1565,6 +1565,298 @@ export class HorrorAudioManager {
     return this.songPlaying;
   }
 
+  private emitSubtitle(
+    hindi: string,
+    hinglish: string,
+    durationMs: number,
+    speaker: 'ghost' | 'player' = 'player'
+  ): void {
+    this.subtitleSeq += 1;
+    this.onSubtitle?.({
+      hindi,
+      hinglish,
+      speaker,
+      id: this.subtitleSeq,
+    });
+    if (this.subtitleTimeout !== null) {
+      window.clearTimeout(this.subtitleTimeout);
+    }
+    this.subtitleTimeout = window.setTimeout(() => {
+      this.onSubtitle?.(null);
+    }, durationMs);
+  }
+
+  /**
+   * Speaks protagonist Hindi monologue offline using window.AndroidTTS.speak(text, 1.0, 0.95)
+   * when running inside Android Capacitor WebView, falling back to browser Web Speech API,
+   * and displays synchronized Hindi/Hinglish subtitles.
+   */
+  public speakProtagonistLine(hindi: string, hinglish: string, durationMs = 6800): void {
+    this.unlock();
+    this.emitSubtitle(hindi, hinglish, durationMs, 'player');
+    if (this.muted) return;
+
+    const androidTTS = typeof window !== 'undefined' ? (window as any).AndroidTTS : undefined;
+    if (androidTTS && typeof androidTTS.speak === 'function') {
+      try {
+        androidTTS.speak(hindi, 1.0, 0.95);
+        return;
+      } catch {
+        // fallback to Web Speech API
+      }
+    }
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(hindi);
+        utter.lang = 'hi-IN';
+        utter.rate = 1.0;
+        utter.pitch = 0.95;
+        utter.volume = Math.max(0.3, Math.min(1, this.volume));
+
+        const voices = window.speechSynthesis.getVoices();
+        const hiVoice =
+          voices.find((v) => v.lang.toLowerCase().startsWith('hi')) ||
+          voices.find((v) => v.lang.toLowerCase().includes('in'));
+        if (hiVoice) {
+          utter.voice = hiVoice;
+        }
+        window.speechSynthesis.speak(utter);
+      } catch {
+        // ignore if speech synthesis unavailable
+      }
+    }
+  }
+
+  /** Realistic synthesized offline street dog double-bark ("भौं... भौं...") */
+  public playDogBark(happy = false, showSubtitle = false): void {
+    this.unlock();
+    if (showSubtitle) {
+      this.emitSubtitle('भौं... भौं...', 'Bhau... Bhau... (Dog barking behind you!)', 3600, 'player');
+    }
+    if (!this.ctx || !this.masterGain || this.muted) return;
+
+    const now = this.ctx.currentTime;
+    const offsets = happy ? [0, 0.24] : [0, 0.34];
+    const baseFreq = happy ? 275 : 210;
+
+    offsets.forEach((off, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const t = now + off;
+      const osc = this.ctx.createOscillator();
+      const osc2 = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sawtooth';
+      osc2.type = 'triangle';
+      const pitchShift = idx === 1 ? 1.08 : 1.0;
+      osc.frequency.setValueAtTime(baseFreq * 0.72 * pitchShift, t);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.48 * pitchShift, t + 0.045);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.52 * pitchShift, t + 0.19);
+
+      osc2.frequency.setValueAtTime(baseFreq * 1.5 * pitchShift, t);
+      osc2.frequency.exponentialRampToValueAtTime(baseFreq * 0.88 * pitchShift, t + 0.18);
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(happy ? 920 : 720, t);
+      filter.frequency.exponentialRampToValueAtTime(420, t + 0.19);
+      filter.Q.value = 2.6;
+
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(happy ? 0.32 : 0.42, t + 0.024);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.21);
+
+      osc.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      if (this.ghostReverb) gain.connect(this.ghostReverb);
+
+      osc.start(t);
+      osc2.start(t);
+      osc.stop(t + 0.22);
+      osc2.stop(t + 0.22);
+
+      // Breath rasp burst on bark attack
+      if (this.noiseBuffer) {
+        const ns = this.ctx.createBufferSource();
+        ns.buffer = this.noiseBuffer;
+        const nf = this.ctx.createBiquadFilter();
+        nf.type = 'bandpass';
+        nf.frequency.value = 950;
+        const ng = this.ctx.createGain();
+        ng.gain.setValueAtTime(0.0001, t);
+        ng.gain.linearRampToValueAtTime(0.18, t + 0.02);
+        ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+        ns.connect(nf);
+        nf.connect(ng);
+        ng.connect(this.masterGain);
+        ns.start(t);
+        ns.stop(t + 0.15);
+      }
+    });
+  }
+
+  /** Soft pleading dog whimper near the ruined hut */
+  public playDogWhimper(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(480, t);
+    osc.frequency.exponentialRampToValueAtTime(640, t + 0.18);
+    osc.frequency.exponentialRampToValueAtTime(380, t + 0.58);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.12, t + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.62);
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.64);
+  }
+
+  /** Sharp thorny bush scratch & pain grunt */
+  public playPainThorn(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    if (this.noiseBuffer) {
+      const ns = this.ctx.createBufferSource();
+      ns.buffer = this.noiseBuffer;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'highpass';
+      f.frequency.value = 1350;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.45, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+      ns.connect(f);
+      f.connect(g);
+      g.connect(this.masterGain);
+      ns.start(t);
+      ns.stop(t + 0.25);
+    }
+
+    const osc = this.ctx.createOscillator();
+    const g2 = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(170, t);
+    osc.frequency.exponentialRampToValueAtTime(72, t + 0.26);
+    g2.gain.setValueAtTime(0.28, t);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+    osc.connect(g2);
+    g2.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.3);
+  }
+
+  /** Sharp venomous black scorpion sting + ear-ringing faint drop */
+  public playScorpionSting(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    const snap = this.ctx.createOscillator();
+    const sg = this.ctx.createGain();
+    snap.type = 'sawtooth';
+    snap.frequency.setValueAtTime(880, t);
+    snap.frequency.exponentialRampToValueAtTime(95, t + 0.16);
+    sg.gain.setValueAtTime(0.42, t);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    snap.connect(sg);
+    sg.connect(this.masterGain);
+    snap.start(t);
+    snap.stop(t + 0.2);
+
+    // Subtle fainting ear-ring
+    const ring = this.ctx.createOscillator();
+    const rg = this.ctx.createGain();
+    ring.type = 'sine';
+    ring.frequency.setValueAtTime(2450, t + 0.06);
+    ring.frequency.exponentialRampToValueAtTime(1750, t + 0.9);
+    rg.gain.setValueAtTime(0.0001, t + 0.06);
+    rg.gain.linearRampToValueAtTime(0.14, t + 0.14);
+    rg.gain.exponentialRampToValueAtTime(0.0001, t + 0.95);
+    ring.connect(rg);
+    rg.connect(this.masterGain);
+    ring.start(t + 0.06);
+    ring.stop(t + 0.98);
+  }
+
+  /** Wooden well pulley creak & rope hoist sound */
+  public playPulleyDraw(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const now = this.ctx.currentTime;
+    for (let i = 0; i < 4; i++) {
+      const t = now + i * 0.42;
+      const osc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(185 + i * 16, t);
+      osc.frequency.linearRampToValueAtTime(290 + i * 12, t + 0.22);
+      osc.frequency.linearRampToValueAtTime(160, t + 0.34);
+      filter.type = 'bandpass';
+      filter.frequency.value = 640;
+      filter.Q.value = 4.2;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.18, t + 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 0.38);
+    }
+    this.playWaterSplash();
+  }
+
+  /** Refreshing water splash / pour sound */
+  public playWaterSplash(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const t = this.ctx.currentTime;
+    const ns = this.ctx.createBufferSource();
+    ns.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1100, t);
+    bp.frequency.exponentialRampToValueAtTime(520, t + 0.65);
+    bp.Q.value = 1.4;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.26, t + 0.07);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.72);
+    ns.connect(bp);
+    bp.connect(g);
+    g.connect(this.masterGain);
+    ns.start(t);
+    ns.stop(t + 0.75);
+  }
+
+  /** Sharp metallic poke under the protagonist's back on the stone veranda */
+  public playKeyPoke(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1180, t);
+    osc.frequency.exponentialRampToValueAtTime(320, t + 0.14);
+    g.gain.setValueAtTime(0.36, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    osc.connect(g);
+    g.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
+
   public loadCustomTrack(key: keyof CustomAudioTrackMap, url: string): void {
     this.customTracks[key] = url;
     const el = new Audio(url);

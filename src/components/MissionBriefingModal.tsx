@@ -1,11 +1,7 @@
 import React from 'react';
 import { ShieldCheck, Play, X, Map as MapIcon } from 'lucide-react';
-import {
-  CHAPTER_CONFIGS,
-  ChapterNumber,
-  DIFFICULTY_CONFIGS,
-  Difficulty,
-} from '../game/types';
+import { CHAPTER_CONFIGS, CHAPTER_LIST, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
+import { ChapterNumber, DIFFICULTY_CONFIGS, Difficulty } from '../game/types';
 
 interface MissionBriefingModalProps {
   mode: 'pregame' | 'guide';
@@ -24,7 +20,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
 }) => {
   const diffConfig = DIFFICULTY_CONFIGS[difficulty];
   const chapterMeta = CHAPTER_CONFIGS[chapter];
-  const allChapters = ([1, 2, 3, 4, 5] as ChapterNumber[]).map((n) => CHAPTER_CONFIGS[n]);
+  const isOutdoor = chapterMeta.environment === 'outdoor';
 
   return (
     <div
@@ -41,7 +37,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
           <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-2.5">
             <div className="space-y-0.5">
               <p className="text-[10px] sm:text-xs tracking-[0.2em] uppercase text-[#e5a94c] font-medium">
-                Chapter {chapter} of 5 · {diffConfig.label}
+                Chapter {chapter} of {TOTAL_CHAPTERS} · {diffConfig.label}
               </p>
               <h2 className="font-display text-lg sm:text-2xl font-bold text-[#f4ede0] tracking-wide">
                 {chapterMeta.title}{' '}
@@ -78,9 +74,9 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
             ))}
           </div>
 
-          {/* 5-Chapter Campaign Roadmap Strip */}
-          <div className="grid grid-cols-5 gap-1.5">
-            {allChapters.map((ch) => {
+          {/* Dynamic Campaign Roadmap Strip */}
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+            {CHAPTER_LIST.map((ch) => {
               const active = ch.id === chapter;
               return (
                 <div
@@ -105,13 +101,17 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
           {/* Live Map & Controls Strip */}
           <div className="p-2.5 rounded-sm border border-[#6ea8b5]/25 bg-[#0c191d] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#b8ccce]">
             <div className="flex items-center gap-1.5">
-              <MapIcon className="w-3.5 h-3.5 text-[#ff6b6b] shrink-0" />
-              <span>Red diamond = Ghost · Amber dot = Task · Tap Radar to expand</span>
+              <MapIcon className="w-3.5 h-3.5 text-[#f3bd60] shrink-0" />
+              <span>
+                {isOutdoor
+                  ? 'Golden pin = Next Objective · Jump over Thorns & Black Scorpions · Auto Checkpoints'
+                  : 'Red diamond = Ghost · Amber dot = Task · Tap Radar to expand'}
+              </span>
             </div>
             <div className="flex items-center gap-1.5 text-[#7cc2cd]">
               <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
               <span className="font-mono-tabular text-[#e5c27b] whitespace-nowrap">
-                {isTouchDevice ? 'Joystick · Swipe · Use · Torch' : 'WASD · Mouse · E · F · M'}
+                {isTouchDevice ? 'Joystick · Jump · Use · Torch' : 'WASD · Space Jump · E · F · M'}
               </span>
             </div>
           </div>

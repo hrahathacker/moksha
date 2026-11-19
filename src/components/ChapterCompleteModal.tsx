@@ -1,6 +1,12 @@
 import React from 'react';
 import { ArrowRight, RotateCcw, Home, CheckCircle2, Flame } from 'lucide-react';
-import { CHAPTER_CONFIGS, ChapterNumber } from '../game/types';
+import {
+  CHAPTER_CONFIGS,
+  FINAL_CHAPTER_ID,
+  TOTAL_CHAPTERS,
+  getNextChapterId,
+} from '../chapters/chapterRegistry';
+import { ChapterNumber } from '../game/types';
 import { formatTime } from '../game/reportCard';
 
 interface ChapterCompleteModalProps {
@@ -23,7 +29,7 @@ export const ChapterCompleteModal: React.FC<ChapterCompleteModalProps> = ({
   onReturnTitle,
 }) => {
   const finishedMeta = CHAPTER_CONFIGS[completedChapter];
-  const nextNum = Math.min(5, completedChapter + 1) as ChapterNumber;
+  const nextNum = getNextChapterId(completedChapter) ?? FINAL_CHAPTER_ID;
   const nextMeta = CHAPTER_CONFIGS[nextNum];
 
   return (
@@ -41,7 +47,9 @@ export const ChapterCompleteModal: React.FC<ChapterCompleteModalProps> = ({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.2em] text-[#eab354] font-semibold">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>Chapter {completedChapter} of 5 Complete</span>
+                <span>
+                  Chapter {completedChapter} of {TOTAL_CHAPTERS} Complete
+                </span>
               </div>
               <h2 className="font-display text-2xl font-bold text-[#f5efe2] tracking-wide">
                 {finishedMeta.title}
@@ -87,7 +95,9 @@ export const ChapterCompleteModal: React.FC<ChapterCompleteModalProps> = ({
             >
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-[#e5a94c] font-semibold">
                 <Flame className="w-3.5 h-3.5" />
-                <span>Up Next · Chapter {nextMeta.id} of 5</span>
+                <span>
+                  Up Next · Chapter {nextMeta.id} of {TOTAL_CHAPTERS}
+                </span>
               </div>
               <div className="font-display text-lg font-bold text-[#f7f0e2]">
                 {nextMeta.title}{' '}

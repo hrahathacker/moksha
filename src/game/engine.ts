@@ -1,5 +1,15 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import {
+  CHAPTER_CONFIGS,
+  TOTAL_CHAPTERS,
+  getChapterModule,
+} from '../chapters/chapterRegistry';
+import {
+  ChapterCheckpoint,
+  ChapterModule,
+  ChapterRuntimeContext,
+} from '../chapters/types';
 import { HorrorAudioManager } from './audio';
 import { GhostAIController } from './ghostAI';
 import { HaveliWorld, StealthCoverCheck, buildHaveliWorld } from './haveliMap';
@@ -10,10 +20,10 @@ import {
   createFlashlightViewModel,
   createGhostModel,
 } from './models';
+import { OutdoorVillageWorld, buildOutdoorVillageWorld } from './outdoorVillageMap';
 import { ProceduralTexturePack, createProceduralTextures } from './textures';
 import {
   ActiveEnemyHudState,
-  CHAPTER_CONFIGS,
   ChapterNumber,
   DIFFICULTY_CONFIGS,
   Difficulty,
@@ -24,7 +34,6 @@ import {
   HudSnapshot,
   LoreNoteData,
   MinimapData,
-  MinimapObjective,
   PlayerStance,
   RITUAL_ITEMS,
   RitualItemId,
@@ -88,6 +97,8 @@ export class MokshaGameEngine {
 
   private textures: ProceduralTexturePack;
   private world: HaveliWorld;
+  private outdoorWorld: OutdoorVillageWorld;
+  private activeChapter: ChapterModule;
   private ghostRig: GhostRig;
   private ghostAI: GhostAIController;
   private flashlight: FlashlightRig;
@@ -111,8 +122,23 @@ export class MokshaGameEngine {
   private difficulty: Difficulty = 'normal';
   private quality: GraphicsQuality = 'high';
   private currentChapter: ChapterNumber = 1;
-  private chapter2Decoded = false;
-  private chapter3NextBellIndex = 0;
+
+  private playerHealth = 100;
+  private damageFlash = 0;
+  private hurtInvulnTimer = 0;
+  private activeCheckpoint: ChapterCheckpoint = {
+    id: 'start',
+    label: 'Village Path Start',
+    x: 0,
+    z: 25.0,
+    yaw: 0,
+  };
+  private checkpointBanner: string | null = null;
+  private checkpointBannerTimer = 0;
+  private injuredReason: string | null = null;
+  private cameraOverrideActive = false;
+  private cameraOverridePos = new THREE.Vector3();
+  private cameraOverrideLook = new THREE.Vector3();
 
   private playerPos = new THREE.Vector3(0, EYE_HEIGHT_STANDING, 11.4);
   private playerYaw = 0;
@@ -294,6 +320,16 @@ export class MokshaGameEngine {
     this.world.applyQualityMaterials(initialQuality === 'low');
     this.scene.add(this.world.root);
 
+    this.outdoorWorld = buildOutdoorVillageWorld(
+      this.textures,
+      initialQuality === 'low' || this.isMobile
+    );
+    this.outdoorWorld.applyQualityMaterials(initialQuality === 'low');
+    this.outdoorWorld.root.visible = false;
+    this.scene.add(this.outdoorWorld.root);
+
+    this.activeChapter = getChapterModule(1);
+
     this.ghostRig = createGhostModel(this.textures);
     this.scene.add(this.ghostRig.root);
 
@@ -406,8 +442,8 @@ export class MokshaGameEngine {
         const pick = 1 + Math.floor(Math.random() * Math.max(1, emitters.length - 1));
         emitterPos = emitters[Math.min(pick, emitters.length - 1)];
       }
-      // Also mix in lit Chapter 1 shrine diyas when active
-      if (!climaxBoost && this.currentChapter === 1 && Math.random() < 0.25) {
+      // Also mix in lit Chapter 2 shrine diyas when active
+      if (!climaxBoost && this.currentChapter === 2 && Math.random() < 0.25) {
         const litDiyas = this.world.shrineDiyas;
         for (let k = 0; k < litDiyas.length; k++) {
           const candidate = litDiyas[(index + k) % litDiyas.length];
@@ -542,11 +578,22 @@ export class MokshaGameEngine {
     this.applyQualityPixelRatio();
     this.applyShadowQuality();
     this.world.applyQualityMaterials(isLow);
+    this.outdoorWorld.applyQualityMaterials(isLow);
     this.dustParticles.visible = true;
     this.dustParticles.geometry.setDrawRange(0, isLow ? DUST_LOW_COUNT : DUST_HIGH_COUNT);
     this.emberPoints.geometry.setDrawRange(0, isLow ? EMBER_LOW_COUNT : EMBER_HIGH_COUNT);
     if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.density = isLow ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
+      const isOutdoorActive =
+        this.phase !== 'title' &&
+        this.phase !== 'story' &&
+        this.activeChapter.config.environment === 'outdoor';
+      this.scene.fog.density = isOutdoorActive
+        ? isLow
+          ? 0.044
+          : 0.036
+        : isLow
+          ? FOG_DENSITY_LOW
+          : FOG_DENSITY_HIGH;
     }
   }
 
@@ -603,10 +650,238 @@ export class MokshaGameEngine {
     return out;
   }
 
+  private isOutdoorActive(): boolean {
+    return (
+      this.phase !== 'title' &&
+      this.phase !== 'story' &&
+      this.activeChapter.config.environment === 'outdoor'
+    );
+  }
+
+  private syncEnvironmentVisibility(): void {
+    const isOutdoor = this.isOutdoorActive();
+    this.world.root.visible = !isOutdoor;
+    this.outdoorWorld.root.visible = isOutdoor;
+    this.ghostRig.root.visible = !isOutdoor;
+    this.emberPoints.visible = !isOutdoor;
+
+    const targetFar = isOutdoor ? 84 : 48;
+    if (this.camera.far !== targetFar) {
+      this.camera.far = targetFar;
+      this.camera.updateProjectionMatrix();
+    }
+
+    const isLow = this.quality === 'low';
+    this.hemiLight.color.setHex(COLD_TEAL_HEMI_SKY);
+    this.hemiLight.groundColor.setHex(COLD_TEAL_HEMI_GROUND);
+    this.hemiLight.intensity = isOutdoor ? 0.78 : 0.62;
+    this.moonLight.color.setHex(COLD_TEAL_MOON);
+    this.moonLight.intensity = isOutdoor ? 1.56 : 1.38;
+    if (this.scene.background instanceof THREE.Color) {
+      this.scene.background.setHex(COLD_TEAL_BG);
+    }
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.setHex(COLD_TEAL_BG);
+      this.scene.fog.density = isOutdoor
+        ? isLow
+          ? 0.044
+          : 0.036
+        : isLow
+          ? FOG_DENSITY_LOW
+          : FOG_DENSITY_HIGH;
+    }
+  }
+
+  private createChapterContext(): ChapterRuntimeContext {
+    const self = this;
+    return {
+      world: this.world,
+      outdoorWorld: this.outdoorWorld,
+      ghostAI: this.ghostAI,
+      audio: this.audio,
+      playerPos: this.playerPos,
+      get playerYaw() {
+        return self.playerYaw;
+      },
+      get playerPitch() {
+        return self.playerPitch;
+      },
+      get playerFeetY() {
+        return self.playerFeetY;
+      },
+      get stance() {
+        return self.stance;
+      },
+      get difficulty() {
+        return self.difficulty;
+      },
+      get elapsedSeconds() {
+        return self.elapsedSeconds;
+      },
+      get timeSinceProgress() {
+        return self.timeSinceProgress;
+      },
+      get hintActive() {
+        return self.hintActive;
+      },
+      get holdingItem() {
+        return self.holdingItem;
+      },
+      get placedItems() {
+        return self.placedItems;
+      },
+      resetProgressTimer: () => {
+        self.timeSinceProgress = 0;
+        self.hintActive = false;
+      },
+      setHoldingItem: (id) => {
+        self.holdingItem = id;
+      },
+      addPlacedItem: (id) => {
+        self.placedItems.push(id);
+      },
+      completeChapter: () => {
+        self.completeNonFinalChapter();
+      },
+      startClimax: () => {
+        self.phase = 'climax';
+        self.climaxRemaining = DIFFICULTY_CONFIGS[self.difficulty].climaxDuration;
+        self.audio.playPlayerReaction('climax');
+      },
+      openNote: (note) => {
+        self.activeNote = note;
+        self.phase = 'note';
+        self.keys.clear();
+        self.releasePointerLock();
+      },
+      spawnBurst: (origin, colorHex) => {
+        self.spawnPickupBurst(origin, colorHex);
+      },
+      triggerInteractImpulse: (strength) => {
+        self.triggerInteractImpulse(strength);
+      },
+      triggerCameraJolt: (pitch, roll) => {
+        self.attackRecoilPitch = pitch;
+        self.attackRecoilRoll = roll;
+      },
+      setCheckpoint: (cp, showBanner = true) => {
+        self.activeCheckpoint = { ...cp };
+        if (showBanner) {
+          self.checkpointBanner = `Checkpoint Saved · ${cp.label}`;
+          self.checkpointBannerTimer = 3.2;
+        }
+      },
+      damagePlayer: (amount, reason, kind, pushX, pushZ) => {
+        self.applyPlayerInjury(amount, reason, kind, pushX, pushZ);
+      },
+      healPlayerFull: () => {
+        self.playerHealth = 100;
+        self.stamina = 100;
+        self.damageFlash = 0;
+      },
+      forceStance: (next) => {
+        self.stance = next;
+        self.touchInput.sprint = false;
+      },
+      setPlayerPose: (x, z, yaw, pitch) => {
+        self.playerPos.x = x;
+        self.playerPos.z = z;
+        if (typeof yaw === 'number') self.playerYaw = yaw;
+        if (typeof pitch === 'number') self.playerPitch = pitch;
+      },
+      setCameraOverride: (pos, lookAt) => {
+        self.cameraOverrideActive = true;
+        self.cameraOverridePos.copy(pos);
+        self.cameraOverrideLook.copy(lookAt);
+      },
+      clearCameraOverride: () => {
+        self.cameraOverrideActive = false;
+      },
+      emitHud: () => {
+        self.emitHud();
+      },
+    };
+  }
+
+  private chapterCtxCache: ChapterRuntimeContext | null = null;
+  private getChapterContext(): ChapterRuntimeContext {
+    if (!this.chapterCtxCache) {
+      this.chapterCtxCache = this.createChapterContext();
+    }
+    return this.chapterCtxCache;
+  }
+
+  private applyPlayerInjury(
+    amount: number,
+    reason: string,
+    kind: 'thorn' | 'scorpion',
+    pushX?: number,
+    pushZ?: number
+  ): void {
+    if (this.hurtInvulnTimer > 0 || this.phase !== 'playing') return;
+    this.playerHealth = Math.max(0, this.playerHealth - amount);
+    this.damageFlash = 1.0;
+    this.attackRecoilPitch = 0.14;
+    this.attackRecoilRoll = kind === 'scorpion' ? 0.16 : -0.11;
+
+    if (kind === 'thorn') {
+      this.audio.playPainThorn();
+      if (typeof pushX === 'number' && typeof pushZ === 'number') {
+        this.playerPos.x += pushX;
+        this.playerPos.z += pushZ;
+        this.outdoorWorld.resolvePlayerCollision(this.playerPos, 0.36);
+      }
+    } else {
+      this.audio.playScorpionSting();
+    }
+
+    if (this.playerHealth <= 0) {
+      this.phase = 'injured';
+      this.injuredReason = reason;
+      this.keys.clear();
+      this.touchInput.moveX = 0;
+      this.touchInput.moveY = 0;
+      this.touchInput.sprint = false;
+      this.releasePointerLock();
+      this.audio.setTension(0, false);
+    } else {
+      this.hurtInvulnTimer = 1.5;
+    }
+    this.emitHud();
+  }
+
+  public reviveAtCheckpoint(): void {
+    if (this.phase !== 'injured') return;
+    this.audio.unlock();
+    this.playerHealth = 100;
+    this.stamina = 100;
+    this.damageFlash = 0;
+    this.hurtInvulnTimer = 1.8;
+    this.injuredReason = null;
+    this.cameraOverrideActive = false;
+    this.stance = 'standing';
+    this.playerFeetY = 0;
+    this.playerVelY = 0;
+    this.isGrounded = true;
+    this.currentEyeHeight = EYE_HEIGHT_STANDING;
+    this.playerPos.set(this.activeCheckpoint.x, EYE_HEIGHT_STANDING, this.activeCheckpoint.z);
+    this.playerYaw = this.activeCheckpoint.yaw;
+    this.playerPitch = 0;
+    this.keys.clear();
+    this.touchInput.moveX = 0;
+    this.touchInput.moveY = 0;
+    this.touchInput.sprint = false;
+    this.phase = 'playing';
+    this.audio.playTempleBell(0.45);
+    this.emitHud();
+    this.requestPointerLock();
+  }
+
   private completeNonFinalChapter(): void {
     this.phase = 'chapter_complete';
     this.hidingAlmirah = null;
     this.activeNote = null;
+    this.cameraOverrideActive = false;
     this.keys.clear();
     this.releasePointerLock();
     this.audio.setTension(0, false);
@@ -617,27 +892,28 @@ export class MokshaGameEngine {
   private resetRunState(difficulty: Difficulty, chapter: ChapterNumber): void {
     this.difficulty = difficulty;
     this.currentChapter = chapter;
-    this.chapter2Decoded = false;
-    this.chapter3NextBellIndex = 0;
-    this.world.configureForChapter(chapter);
+    this.activeChapter = getChapterModule(chapter);
     this.ghostAI.reset();
 
-    // Restore cold moonlit teal atmosphere in case previous run ended in golden Shanti victory
-    this.hemiLight.color.setHex(COLD_TEAL_HEMI_SKY);
-    this.hemiLight.groundColor.setHex(COLD_TEAL_HEMI_GROUND);
-    this.hemiLight.intensity = 0.62;
-    this.moonLight.color.setHex(COLD_TEAL_MOON);
-    this.moonLight.intensity = 1.38;
-    if (this.scene.background instanceof THREE.Color) {
-      this.scene.background.setHex(COLD_TEAL_BG);
-    }
-    if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.color.setHex(COLD_TEAL_BG);
-      this.scene.fog.density = this.quality === 'low' ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
-    }
+    this.playerHealth = 100;
+    this.damageFlash = 0;
+    this.hurtInvulnTimer = 0;
+    this.checkpointBanner = null;
+    this.checkpointBannerTimer = 0;
+    this.injuredReason = null;
+    this.cameraOverrideActive = false;
 
-    this.playerPos.set(0, EYE_HEIGHT_STANDING, 11.4);
-    this.playerYaw = 0;
+    const sp = this.activeChapter.getSpawn();
+    this.activeCheckpoint = {
+      id: 'start',
+      label: this.activeChapter.config.environment === 'outdoor' ? 'Village Path Start' : 'Haveli Courtyard',
+      x: sp.x,
+      z: sp.z,
+      yaw: sp.yaw,
+    };
+
+    this.playerPos.set(sp.x, EYE_HEIGHT_STANDING, sp.z);
+    this.playerYaw = sp.yaw;
     this.playerPitch = 0;
     this.stance = 'standing';
     this.playerFeetY = 0;
@@ -695,6 +971,8 @@ export class MokshaGameEngine {
       a.leftDoorPivot.rotation.y = 0;
       a.rightDoorPivot.rotation.y = 0;
     });
+
+    this.activeChapter.reset(this.getChapterContext());
   }
 
   /**
@@ -712,6 +990,7 @@ export class MokshaGameEngine {
     this.resetRunState(difficulty, chapter);
 
     this.phase = skipStoryAndBriefing ? 'playing' : 'story';
+    this.syncEnvironmentVisibility();
     this.audio.playTempleBell(0.6);
     this.emitHud();
   }
@@ -728,6 +1007,7 @@ export class MokshaGameEngine {
     this.resetRunState(difficulty, chapter);
 
     this.phase = showBriefing ? 'briefing' : 'playing';
+    this.syncEnvironmentVisibility();
     this.audio.playTempleBell(0.62);
     this.emitHud();
     if (!showBriefing) {
@@ -739,6 +1019,7 @@ export class MokshaGameEngine {
     if (this.phase !== 'story') return;
     this.audio.stopStoryNarration();
     this.phase = 'briefing';
+    this.syncEnvironmentVisibility();
     this.emitHud();
   }
 
@@ -747,6 +1028,7 @@ export class MokshaGameEngine {
     this.audio.unlock();
     this.audio.stopStoryNarration();
     this.phase = 'playing';
+    this.syncEnvironmentVisibility();
     this.audio.playTempleBell(0.7);
     this.emitHud();
     this.requestPointerLock();
@@ -782,20 +1064,10 @@ export class MokshaGameEngine {
     this.phase = 'title';
     this.activeNote = null;
     this.hidingAlmirah = null;
+    this.cameraOverrideActive = false;
     this.keys.clear();
     this.releasePointerLock();
-    this.hemiLight.color.setHex(COLD_TEAL_HEMI_SKY);
-    this.hemiLight.groundColor.setHex(COLD_TEAL_HEMI_GROUND);
-    this.hemiLight.intensity = 0.62;
-    this.moonLight.color.setHex(COLD_TEAL_MOON);
-    this.moonLight.intensity = 1.38;
-    if (this.scene.background instanceof THREE.Color) {
-      this.scene.background.setHex(COLD_TEAL_BG);
-    }
-    if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.color.setHex(COLD_TEAL_BG);
-      this.scene.fog.density = this.quality === 'low' ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
-    }
+    this.syncEnvironmentVisibility();
     this.audio.setTension(0, false);
     this.emitHud();
   }
@@ -830,8 +1102,12 @@ export class MokshaGameEngine {
 
     const targetBodyH = this.getTargetBodyHeight(next);
     const currentBodyH = this.getTargetBodyHeight(this.stance);
-    // Block rising if physically underneath a table or wooden charpai
-    if (targetBodyH > currentBodyH && !this.world.hasHeadroomAt(this.playerPos.x, this.playerPos.z, 0.34, targetBodyH)) {
+    // Block rising if physically underneath a table or wooden charpai (indoor Haveli)
+    if (
+      !this.isOutdoorActive() &&
+      targetBodyH > currentBodyH &&
+      !this.world.hasHeadroomAt(this.playerPos.x, this.playerPos.z, 0.34, targetBodyH)
+    ) {
       this.headroomBlockedTimer = 1.6;
       this.audio.playFlashlightClick();
       this.emitHud();
@@ -915,6 +1191,7 @@ export class MokshaGameEngine {
 
     for (let i = 0; i < this.combatEnemies.length; i++) {
       const enemy = this.combatEnemies[i];
+      if (this.isOutdoorActive() && enemy === this.ghostAI) continue;
       if (enemy.isDefeated) continue;
       _toEnemy.set(enemy.position.x - this.playerPos.x, 0, enemy.position.z - this.playerPos.z);
       const dist = _toEnemy.length();
@@ -924,7 +1201,10 @@ export class MokshaGameEngine {
       if (dot < ATTACK_CONE_COS && dist > 1.15) continue;
 
       // Require clear line of sight so attacks don't strike through solid walls
-      if (!this.world.hasLineOfSight(this.playerPos, _toEnemy.set(enemy.position.x, 0, enemy.position.z))) {
+      if (
+        !this.isOutdoorActive() &&
+        !this.world.hasLineOfSight(this.playerPos, _toEnemy.set(enemy.position.x, 0, enemy.position.z))
+      ) {
         continue;
       }
 
@@ -1005,161 +1285,15 @@ export class MokshaGameEngine {
       return;
     }
 
-    // 2. CHAPTER-SPECIFIC INTERACTIONS
-    const distToKund = Math.hypot(this.playerPos.x, this.playerPos.z);
-
-    // --- CHAPTER 1: LIGHT 5 SHRINE DIYAS ---
-    if (this.currentChapter === 1) {
-      for (const diya of this.world.shrineDiyas) {
-        if (diya.lit) continue;
-        const d = Math.hypot(this.playerPos.x - diya.position.x, this.playerPos.z - diya.position.z);
-        if (d < 2.45) {
-          diya.lit = true;
-          diya.flameMesh.visible = true;
-          if (diya.light) diya.light.intensity = 1.9;
-          this.timeSinceProgress = 0;
-          this.hintActive = false;
-          this.triggerInteractImpulse(0.85);
-          this.spawnPickupBurst(diya.position, 0xffb84d);
-          this.audio.playHavanPlace(false);
-
-          const litCount = this.world.shrineDiyas.filter((x) => x.lit).length;
-          if (litCount === 3) {
-            this.audio.speakGhostLine('patrol', true);
-          }
-          if (litCount >= this.world.shrineDiyas.length) {
-            this.completeNonFinalChapter();
-          } else {
-            this.emitHud();
-          }
-          return;
-        }
-      }
+    // 2. CHAPTER-SPECIFIC INTERACTIONS (Modular via activeChapter)
+    const ctx = this.getChapterContext();
+    if (this.activeChapter.interact(ctx)) {
+      return;
     }
 
-    // --- CHAPTER 2: DECODE MANTRA AT HAVAN KUND AFTER READING ALL 4 CLUES ---
-    if (this.currentChapter === 2) {
-      const readCount = this.world.notes.filter((n) => n.read).length;
-      if (readCount >= this.world.notes.length && !this.chapter2Decoded && distToKund < 3.2) {
-        this.chapter2Decoded = true;
-        this.triggerInteractImpulse(1.0);
-        this.spawnPickupBurst(_kundCenter, 0xffd268);
-        this.audio.playHavanPlace(true);
-        this.completeNonFinalChapter();
-        return;
-      }
-    }
-
-    // --- CHAPTER 3: RING 4 HANGING TEMPLE BELLS IN EXACT ORDER ---
-    if (this.currentChapter === 3) {
-      for (const bell of this.world.chapterBells) {
-        if (bell.rung) continue;
-        const d = Math.hypot(this.playerPos.x - bell.position.x, this.playerPos.z - bell.position.z);
-        if (d < 2.65) {
-          if (bell.orderIndex === this.chapter3NextBellIndex) {
-            bell.rung = true;
-            bell.swingVelocity = 4.2;
-            this.chapter3NextBellIndex += 1;
-            this.timeSinceProgress = 0;
-            this.hintActive = false;
-            this.triggerInteractImpulse(0.95);
-            this.spawnPickupBurst(bell.position, 0xffe082);
-            this.audio.playTempleBell(1.0);
-            // Loud bell draws the ghost toward this room — ring & escape!
-            this.ghostAI.notifyNoise(bell.position, 24);
-            if (this.chapter3NextBellIndex === 2) {
-              this.audio.speakGhostLine('near', true);
-            }
-            if (this.chapter3NextBellIndex >= this.world.chapterBells.length) {
-              this.completeNonFinalChapter();
-            } else {
-              this.emitHud();
-            }
-            return;
-          } else {
-            // Wrong order: gentle dull chime so player sees the prompt hint
-            this.audio.playFlashlightClick();
-            this.emitHud();
-            return;
-          }
-        }
-      }
-    }
-
-    // --- CHAPTER 4: SHATTER 4 CURSED CRIMSON TANTRIK SEALS ---
-    if (this.currentChapter === 4) {
-      for (const seal of this.world.cursedSeals) {
-        if (seal.broken) continue;
-        const d = Math.hypot(this.playerPos.x - seal.position.x, this.playerPos.z - seal.position.z);
-        if (d < 2.55) {
-          seal.broken = true;
-          seal.talismanMesh.visible = false;
-          if (seal.light) seal.light.intensity = 0;
-          this.timeSinceProgress = 0;
-          this.hintActive = false;
-          this.triggerInteractImpulse(1.0);
-          this.spawnPickupBurst(seal.position, 0xff4450);
-          this.audio.playHavanPlace(true);
-          this.audio.speakGhostLine('ritual', true);
-          this.ghostAI.notifyNoise(seal.position, 26);
-
-          const brokenCount = this.world.cursedSeals.filter((x) => x.broken).length;
-          if (brokenCount >= this.world.cursedSeals.length) {
-            this.completeNonFinalChapter();
-          } else {
-            this.emitHud();
-          }
-          return;
-        }
-      }
-    }
-
-    // --- CHAPTER 5: OFFER HELD SACRED ITEM AT HAVAN KUND OR COLLECT ITEM ---
-    if (this.currentChapter === 5) {
-      if (this.holdingItem && distToKund < 3.1) {
-        const id = this.holdingItem;
-        this.holdingItem = null;
-        this.placedItems.push(id);
-        const worldItem = this.world.ritualItems.find((r) => r.id === id);
-        if (worldItem) worldItem.placed = true;
-        this.world.havanKund.itemSlots[id].visible = true;
-        this.timeSinceProgress = 0;
-        this.hintActive = false;
-        this.triggerInteractImpulse(0.95);
-        this.spawnPickupBurst(_kundCenter, 0xffae38);
-
-        const isFinal = this.placedItems.length >= 4;
-        this.audio.playHavanPlace(isFinal);
-
-        if (isFinal) {
-          this.phase = 'climax';
-          this.climaxRemaining = DIFFICULTY_CONFIGS[this.difficulty].climaxDuration;
-          this.audio.playPlayerReaction('climax');
-        } else if (this.placedItems.length === 2) {
-          this.audio.speakGhostLine('ritual');
-        }
-        this.emitHud();
-        return;
-      }
-
-      if (!this.holdingItem) {
-        for (const item of this.world.ritualItems) {
-          if (item.collected) continue;
-          const d = Math.hypot(this.playerPos.x - item.position.x, this.playerPos.z - item.position.z);
-          if (d < 2.35) {
-            item.collected = true;
-            item.group.visible = false;
-            this.holdingItem = item.id;
-            this.timeSinceProgress = 0;
-            this.hintActive = false;
-            this.triggerInteractImpulse(0.92);
-            this.spawnPickupBurst(item.position, 0xffd268);
-            this.audio.playItemPickup();
-            this.emitHud();
-            return;
-          }
-        }
-      }
+    // Outdoor chapters handle all interactions via their modular chapter module
+    if (this.isOutdoorActive()) {
+      return;
     }
 
     // 3. Open or Close Creaking Hinged Haveli Wing Doors
@@ -1203,17 +1337,13 @@ export class MokshaGameEngine {
       }
     }
 
-    // 5. Read nearby Hinglish Lore Note (also tracks Chapter 2 progress!)
+    // 5. Read nearby Hinglish Lore Note (tracks Chapter 3 clues cleanly via hook)
     for (const note of this.world.notes) {
       const d = Math.hypot(this.playerPos.x - note.position.x, this.playerPos.z - note.position.z);
       if (d < 2.2) {
         const wasUnread = !note.read;
         note.read = true;
-        if (this.currentChapter === 2 && wasUnread) {
-          this.timeSinceProgress = 0;
-          this.hintActive = false;
-          this.ghostAI.notifyNoise(note.position, 14);
-        }
+        this.activeChapter.onNoteRead?.(ctx, wasUnread, note.position);
         this.triggerInteractImpulse(0.65);
         this.activeNote = note.data;
         this.phase = 'note';
@@ -1234,63 +1364,14 @@ export class MokshaGameEngine {
       return { text: 'Exit Almirah', key: 'E' };
     }
 
-    const distToKund = Math.hypot(this.playerPos.x, this.playerPos.z);
+    const ctx = this.getChapterContext();
+    const chapterPrompt = this.activeChapter.getPrompt(ctx);
+    if (chapterPrompt) {
+      return chapterPrompt;
+    }
 
-    if (this.currentChapter === 1) {
-      for (const diya of this.world.shrineDiyas) {
-        if (diya.lit) continue;
-        if (Math.hypot(this.playerPos.x - diya.position.x, this.playerPos.z - diya.position.z) < 2.45) {
-          return { text: `Light Shrine Diya (${diya.room})`, key: 'E' };
-        }
-      }
-    } else if (this.currentChapter === 2) {
-      const readCount = this.world.notes.filter((n) => n.read).length;
-      if (distToKund < 3.2) {
-        if (readCount >= this.world.notes.length) {
-          return { text: 'Decode 1984 Mantra at Havan Kund', key: 'E' };
-        }
-        return { text: `Read all 4 1984 Clues first (${readCount}/4 Read)`, key: '' };
-      }
-    } else if (this.currentChapter === 3) {
-      for (const bell of this.world.chapterBells) {
-        if (bell.rung) continue;
-        if (Math.hypot(this.playerPos.x - bell.position.x, this.playerPos.z - bell.position.z) < 2.65) {
-          if (bell.orderIndex === this.chapter3NextBellIndex) {
-            return { text: `Ring ${bell.label}`, key: 'E' };
-          }
-          const nextBell = this.world.chapterBells[this.chapter3NextBellIndex];
-          return {
-            text: `Wrong order — Ring ${nextBell?.label ?? 'next bell'} first!`,
-            key: '',
-          };
-        }
-      }
-    } else if (this.currentChapter === 4) {
-      for (const seal of this.world.cursedSeals) {
-        if (seal.broken) continue;
-        if (Math.hypot(this.playerPos.x - seal.position.x, this.playerPos.z - seal.position.z) < 2.55) {
-          return { text: `Shatter Cursed Tantrik Seal (${seal.room})`, key: 'E' };
-        }
-      }
-    } else if (this.currentChapter === 5) {
-      if (distToKund < 3.1) {
-        if (this.holdingItem) {
-          return { text: `Offer ${RITUAL_ITEMS[this.holdingItem].name} to Havan Kund`, key: 'E' };
-        }
-        if (this.placedItems.length < 4) {
-          return { text: `Havan Kund (${this.placedItems.length}/4 Sacred Items Placed)`, key: '' };
-        }
-      }
-
-      for (const item of this.world.ritualItems) {
-        if (item.collected) continue;
-        if (Math.hypot(this.playerPos.x - item.position.x, this.playerPos.z - item.position.z) < 2.35) {
-          if (this.holdingItem) {
-            return { text: 'Offer held item to the Courtyard Havan Kund first', key: '' };
-          }
-          return { text: `Collect ${RITUAL_ITEMS[item.id].name}`, key: 'E' };
-        }
-      }
+    if (this.isOutdoorActive()) {
+      return { text: null, key: 'E' };
     }
 
     for (const door of this.world.hingedDoors) {
@@ -1313,7 +1394,7 @@ export class MokshaGameEngine {
 
     for (const note of this.world.notes) {
       if (Math.hypot(this.playerPos.x - note.position.x, this.playerPos.z - note.position.z) < 2.2) {
-        const badge = this.currentChapter === 2 && !note.read ? ' [CLUE]' : '';
+        const badge = this.activeChapter.getNotePromptBadge?.(ctx, note.read) ?? '';
         return { text: `Read Note${badge}: ${note.data.title}`, key: 'E' };
       }
     }
@@ -1517,8 +1598,21 @@ export class MokshaGameEngine {
       alm.rightDoorPivot.rotation.y = alm.doorOpenAmount;
     }
 
-    // Live 3D courtyard atmospheric camera pan during Title, Story & Briefing modals
+    // Live 3D atmospheric camera pan during Title, Story & Briefing modals
     if (this.phase === 'title' || this.phase === 'story' || this.phase === 'briefing') {
+      if (this.isOutdoorActive()) {
+        // Misty outdoor village overview facing the distant lantern-lit Haveli Gate during Ch 1 Briefing
+        const sway = Math.sin(timeSec * 0.24) * 2.2;
+        this.camera.position.set(sway, 2.35 + Math.sin(timeSec * 0.5) * 0.08, 17.5);
+        this.camera.lookAt(0, 1.85, -18.0);
+        this.outdoorWorld.updateVisuals(dt, timeSec, 0);
+        this.flashlight.viewGroup.visible = false;
+        this.flashlight.spotLight.intensity = 0;
+        this.flashlight.beamMesh.visible = false;
+        this.flashlight.innerBeamMesh.visible = false;
+        this.flashlight.beamDustPoints.visible = false;
+        return;
+      }
       const angle = 0.52 + Math.sin(timeSec * 0.17) * 0.34;
       this.camera.position.set(
         Math.sin(angle) * 6.4,
@@ -1640,14 +1734,31 @@ export class MokshaGameEngine {
     // ACTIVE GAMEPLAY & CLIMAX SIMULATION
     // =========================================================
     const config = DIFFICULTY_CONFIGS[this.difficulty];
+    const isOutdoor = this.isOutdoorActive();
     this.elapsedSeconds += dt;
     this.timeSinceProgress += dt;
-    const inGracePeriod = this.elapsedSeconds < config.spawnGracePeriod && this.phase === 'playing';
+    const inGracePeriod =
+      !isOutdoor && this.elapsedSeconds < config.spawnGracePeriod && this.phase === 'playing';
 
-    this.templeBellTimer -= dt;
-    if (this.templeBellTimer <= 0) {
-      this.audio.playTempleBell(0.36);
-      this.templeBellTimer = 24 + Math.random() * 18;
+    if (this.damageFlash > 0) {
+      this.damageFlash = Math.max(0, this.damageFlash - dt * 2.2);
+    }
+    if (this.hurtInvulnTimer > 0) {
+      this.hurtInvulnTimer = Math.max(0, this.hurtInvulnTimer - dt);
+    }
+    if (this.checkpointBannerTimer > 0) {
+      this.checkpointBannerTimer = Math.max(0, this.checkpointBannerTimer - dt);
+      if (this.checkpointBannerTimer <= 0) {
+        this.checkpointBanner = null;
+      }
+    }
+
+    if (!isOutdoor) {
+      this.templeBellTimer -= dt;
+      if (this.templeBellTimer <= 0) {
+        this.audio.playTempleBell(0.36);
+        this.templeBellTimer = 24 + Math.random() * 18;
+      }
     }
 
     if (!this.hintActive && this.phase === 'playing' && this.timeSinceProgress >= config.hintDelay) {
@@ -1655,85 +1766,11 @@ export class MokshaGameEngine {
       this.audio.playTempleBell(0.75);
     }
 
-    // Update Chapter-specific 3D animations & aura rings
-    if (this.currentChapter === 1) {
-      for (const diya of this.world.shrineDiyas) {
-        const mat = diya.auraRing.material as THREE.MeshBasicMaterial;
-        if (diya.lit) {
-          mat.opacity = 0;
-          const flick = 0.85 + Math.sin(timeSec * 15 + diya.position.x) * 0.2;
-          diya.flameMesh.scale.set(1, flick, 1);
-          if (diya.light) diya.light.intensity = 1.8 * flick;
-        } else {
-          mat.opacity = 0.26 + Math.sin(timeSec * 3.8 + diya.position.z) * 0.14;
-        }
-      }
-    } else if (this.currentChapter === 2) {
-      for (const note of this.world.notes) {
-        const mat = note.auraRing.material as THREE.MeshBasicMaterial;
-        mat.opacity = note.read ? 0 : 0.28 + Math.sin(timeSec * 4.2 + note.position.x) * 0.14;
-      }
-    } else if (this.currentChapter === 3) {
-      for (const bell of this.world.chapterBells) {
-        if (Math.abs(bell.swingVelocity) > 0.01 || Math.abs(bell.swingAngle) > 0.005) {
-          bell.swingVelocity -= bell.swingAngle * 14 * dt;
-          bell.swingVelocity *= Math.pow(0.28, dt);
-          bell.swingAngle += bell.swingVelocity * dt;
-          bell.bellPivot.rotation.z = bell.swingAngle;
-        }
-        const mat = bell.auraRing.material as THREE.MeshBasicMaterial;
-        if (bell.rung) {
-          mat.opacity = 0;
-        } else if (bell.orderIndex === this.chapter3NextBellIndex) {
-          mat.color.setHex(0xffc857);
-          mat.opacity = 0.42 + Math.sin(timeSec * 5.2) * 0.18;
-        } else {
-          mat.color.setHex(0x6c8c94);
-          mat.opacity = 0.12;
-        }
-      }
-    } else if (this.currentChapter === 4) {
-      for (const seal of this.world.cursedSeals) {
-        const mat = seal.auraRing.material as THREE.MeshBasicMaterial;
-        if (seal.broken) {
-          mat.opacity = 0;
-        } else {
-          seal.talismanMesh.rotation.y = timeSec * 1.8;
-          seal.talismanMesh.position.y = 1.62 + Math.sin(timeSec * 3.2 + seal.position.x) * 0.08;
-          mat.opacity = 0.32 + Math.sin(timeSec * 4.8) * 0.16;
-          if (seal.light) {
-            seal.light.intensity = 1.55 + Math.sin(timeSec * 7 + seal.position.z) * 0.35;
-          }
-        }
-      }
-    } else if (this.currentChapter === 5) {
-      let nearestUncollectedId: RitualItemId | null = null;
-      let nearestUncollectedDist = Infinity;
-      for (const item of this.world.ritualItems) {
-        if (item.flameMesh) {
-          const s = 0.85 + Math.sin(timeSec * 16) * 0.18;
-          item.flameMesh.scale.set(1, s, 1);
-        }
-        if (!item.collected) {
-          item.group.position.y = item.position.y + Math.sin(timeSec * 2.6 + item.position.x) * 0.032;
-          item.group.rotation.y = timeSec * 0.55;
-          const d = Math.hypot(this.playerPos.x - item.position.x, this.playerPos.z - item.position.z);
-          if (d < nearestUncollectedDist) {
-            nearestUncollectedDist = d;
-            nearestUncollectedId = item.id;
-          }
-        }
-      }
-      for (const item of this.world.ritualItems) {
-        const mat = item.auraRing.material as THREE.MeshBasicMaterial;
-        const shouldGlow =
-          !item.collected &&
-          ((this.hintActive && item.id === nearestUncollectedId) ||
-            nearestUncollectedDist < 4.5 ||
-            this.difficulty === 'normal');
-        const baseOp = this.hintActive && item.id === nearestUncollectedId ? 0.36 : 0.14;
-        mat.opacity = shouldGlow ? baseOp + Math.sin(timeSec * 3.8) * 0.12 : 0;
-      }
+    // Update modular Chapter logic, animations, hazards & cinematics
+    const chapterCtx = this.getChapterContext();
+    this.activeChapter.update(chapterCtx, dt, timeSec);
+    if (this.phase !== 'playing' && this.phase !== 'climax') {
+      return;
     }
 
     // Cooldowns & transient timers
@@ -1771,8 +1808,10 @@ export class MokshaGameEngine {
       this.stamina = Math.min(100, this.stamina + config.staminaRegenPerSec * dt);
     }
 
+    const movementLocked = Boolean(this.activeChapter.isMovementLocked?.());
+
     // Vertical Jump & Gravity Physics
-    if (!this.hidingAlmirah) {
+    if (!this.hidingAlmirah && !movementLocked) {
       if (!this.isGrounded || this.playerVelY > 0) {
         this.playerFeetY += this.playerVelY * dt;
         this.playerVelY -= GRAVITY * dt;
@@ -1783,7 +1822,7 @@ export class MokshaGameEngine {
           this.isGrounded = true;
           this.landingDip = -Math.min(0.16, 0.07 + impactSpeed * 0.015);
           this.audio.playJumpLand(Math.min(1.2, impactSpeed / 5.0));
-          if (!inGracePeriod) {
+          if (!isOutdoor && !inGracePeriod) {
             this.ghostAI.notifyNoise(this.playerPos, config.hearingRange * 0.72, this.stealthFactor);
           }
         }
@@ -1799,8 +1838,11 @@ export class MokshaGameEngine {
       this.stance === 'prone' ? 0.35 : this.stance === 'crouching' ? 0.6 : 1.0;
 
     let isMoving = false;
-    const roomNow = this.world.getRoomName(this.playerPos.x, this.playerPos.z);
-    if (!this.hidingAlmirah) {
+    const roomNow = isOutdoor
+      ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
+      : this.world.getRoomName(this.playerPos.x, this.playerPos.z);
+
+    if (!this.hidingAlmirah && !movementLocked) {
       const mag = Math.hypot(moveForward, moveRight);
       if (mag > 0.05) {
         isMoving = true;
@@ -1815,20 +1857,36 @@ export class MokshaGameEngine {
         const baseSpeed = isSprinting ? config.playerSprintSpeed : config.playerWalkSpeed;
         const speed = baseSpeed * stanceSpeedMult;
         this.playerPos.addScaledVector(_move, speed * dt);
-        this.world.resolvePlayerCollision(this.playerPos, 0.34, this.playerFeetY, bodyHeight);
+        if (isOutdoor) {
+          this.outdoorWorld.resolvePlayerCollision(this.playerPos, 0.36);
+        } else {
+          this.world.resolvePlayerCollision(this.playerPos, 0.34, this.playerFeetY, bodyHeight);
+        }
 
         if (this.isGrounded) {
-          this.walkBobPhase += dt * (isSprinting ? 13.5 : this.stance === 'prone' ? 5.2 : this.stance === 'crouching' ? 6.8 : 8.5);
+          this.walkBobPhase +=
+            dt *
+            (isSprinting
+              ? 13.5
+              : this.stance === 'prone'
+                ? 5.2
+                : this.stance === 'crouching'
+                  ? 6.8
+                  : 8.5);
           this.footstepCooldown -= dt;
           if (this.footstepCooldown <= 0) {
             if (this.stance === 'prone') {
               this.audio.playStanceShift(true);
               this.footstepCooldown = 0.74;
             } else {
-              this.audio.playFootstep(isSprinting, roomNow === 'Central Aangan');
-              this.footstepCooldown = isSprinting ? 0.3 : this.stance === 'crouching' ? 0.62 : 0.46;
+              this.audio.playFootstep(isSprinting, isOutdoor || roomNow === 'Central Aangan');
+              this.footstepCooldown = isSprinting
+                ? 0.3
+                : this.stance === 'crouching'
+                  ? 0.62
+                  : 0.46;
             }
-            if (isSprinting && !inGracePeriod) {
+            if (!isOutdoor && isSprinting && !inGracePeriod) {
               this.ghostAI.notifyNoise(this.playerPos, config.hearingRange, this.stealthFactor);
             }
           }
@@ -1838,7 +1896,11 @@ export class MokshaGameEngine {
 
     // Evaluate real environmental stealth (Almirah / Prone under Furniture / Corner Crouch Cover)
     const torchLit = this.flashlightOn && !this.hidingAlmirah;
-    if (this.hidingAlmirah) {
+    if (isOutdoor) {
+      this.stealthReason = 'none';
+      this.isConcealed = false;
+      this.stealthFactor = 1.0;
+    } else if (this.hidingAlmirah) {
       this.stealthReason = 'almirah';
       this.isConcealed = !this.flashlightOn;
       this.stealthFactor = this.flashlightOn ? 0.8 : 0.25;
@@ -1862,9 +1924,13 @@ export class MokshaGameEngine {
         this.isConcealed = false;
         this.stealthFactor =
           this.stance === 'prone'
-            ? torchLit ? 0.78 : 0.45
+            ? torchLit
+              ? 0.78
+              : 0.45
             : this.stance === 'crouching'
-              ? torchLit ? 0.88 : 0.62
+              ? torchLit
+                ? 0.88
+                : 0.62
               : 1.0;
       }
     }
@@ -1904,7 +1970,6 @@ export class MokshaGameEngine {
 
     const finalCamY = Math.max(0.32, this.playerFeetY + this.currentEyeHeight + this.landingDip + bobY);
     this.playerPos.y = finalCamY;
-    this.camera.position.set(this.playerPos.x, finalCamY, this.playerPos.z);
 
     // Smoothly damp Torch Bash camera recoil, turn inertia lag & interaction impulse
     this.attackRecoilPitch = THREE.MathUtils.damp(this.attackRecoilPitch, 0, 11, dt);
@@ -1913,23 +1978,29 @@ export class MokshaGameEngine {
     this.lookLagPitch = THREE.MathUtils.damp(this.lookLagPitch, 0, 10.5, dt);
     this.interactImpulse = THREE.MathUtils.damp(this.interactImpulse, 0, 9.0, dt);
 
-    const shakeAmp = this.proximityIntensity > 0.55 ? (this.proximityIntensity - 0.55) * 0.025 : 0;
-    const stanceTilt = this.stance === 'prone' ? 0.018 : 0;
-    const breathPitch = !isMoving && this.isGrounded ? Math.sin(timeSec * 1.85) * 0.0045 : 0;
-    const interactCamPitch = -this.interactImpulse * 0.024;
-    _euler.set(
-      this.playerPitch +
-        this.attackRecoilPitch +
-        breathPitch +
-        interactCamPitch +
-        (Math.random() - 0.5) * shakeAmp,
-      this.playerYaw + (Math.random() - 0.5) * shakeAmp,
-      (isMoving && this.isGrounded ? Math.cos(this.walkBobPhase * 0.5) * (isSprinting ? 0.018 : 0.011) : 0) +
-        this.attackRecoilRoll +
-        stanceTilt,
-      'YXZ'
-    );
-    this.camera.quaternion.setFromEuler(_euler);
+    if (this.cameraOverrideActive) {
+      this.camera.position.copy(this.cameraOverridePos);
+      this.camera.lookAt(this.cameraOverrideLook);
+    } else {
+      this.camera.position.set(this.playerPos.x, finalCamY, this.playerPos.z);
+      const shakeAmp = this.proximityIntensity > 0.55 ? (this.proximityIntensity - 0.55) * 0.025 : 0;
+      const stanceTilt = this.stance === 'prone' ? 0.018 : 0;
+      const breathPitch = !isMoving && this.isGrounded ? Math.sin(timeSec * 1.85) * 0.0045 : 0;
+      const interactCamPitch = -this.interactImpulse * 0.024;
+      _euler.set(
+        this.playerPitch +
+          this.attackRecoilPitch +
+          breathPitch +
+          interactCamPitch +
+          (Math.random() - 0.5) * shakeAmp,
+        this.playerYaw + (Math.random() - 0.5) * shakeAmp,
+        (isMoving && this.isGrounded ? Math.cos(this.walkBobPhase * 0.5) * (isSprinting ? 0.018 : 0.011) : 0) +
+          this.attackRecoilRoll +
+          stanceTilt,
+        'YXZ'
+      );
+      this.camera.quaternion.setFromEuler(_euler);
+    }
 
     // Flashlight battery & proximity flickering + Vintage Torch Bash animation & Golden Holy Spark VFX
     if (this.flashlightOn) {
@@ -2039,7 +2110,7 @@ export class MokshaGameEngine {
     const interactRotX = -this.interactImpulse * 0.22;
     const interactRotZ = -this.interactImpulse * 0.15;
 
-    this.flashlight.viewGroup.visible = !this.hidingAlmirah;
+    this.flashlight.viewGroup.visible = !this.hidingAlmirah && !this.cameraOverrideActive;
     this.flashlight.viewGroup.position.set(
       0.28 + idleBreathX + handBobX + lagOffX + bashOffX,
       -0.22 +
@@ -2095,93 +2166,99 @@ export class MokshaGameEngine {
       this.flashlight.bulbMat.color.setHex(0x3a3228);
     }
 
-    // Update Ghost AI (scaled by current Chapter intensity + real stealth detection reduction + High/Low cloth wave)
-    const climaxActive = this.phase === 'climax';
-    const chapterConfig = this.getChapterScaledConfig();
-    const ghostRes = this.ghostAI.update(
-      dt,
-      timeSec,
-      this.playerPos,
-      this.camera.quaternion,
-      torchLit,
-      this.hidingAlmirah !== null,
-      climaxActive,
-      inGracePeriod,
-      chapterConfig,
-      this.stealthFactor,
-      this.isConcealed,
-      highDetail
-    );
+    if (isOutdoor) {
+      // Outdoor Prologue: no indoor Haveli ghost pursuit; calm atmospheric tension + injury BPM
+      this.proximityIntensity = THREE.MathUtils.damp(this.proximityIntensity, 0, 4.5, dt);
+      const targetOutdoorBpm =
+        72 + (isSprinting ? 18 : 0) + Math.round(((100 - this.playerHealth) / 100) * 44);
+      this.bpm = THREE.MathUtils.damp(this.bpm, Math.min(155, targetOutdoorBpm), 3.0, dt);
+      const roundedOutdoor = Math.round(this.bpm);
+      if (roundedOutdoor > this.maxBpm) this.maxBpm = roundedOutdoor;
+      this.audio.setTension(0, false);
+    } else {
+      // Update Ghost AI (scaled by current Chapter intensity + real stealth detection reduction + High/Low cloth wave)
+      const climaxActive = this.phase === 'climax';
+      const chapterConfig = this.getChapterScaledConfig();
+      const ghostRes = this.ghostAI.update(
+        dt,
+        timeSec,
+        this.playerPos,
+        this.camera.quaternion,
+        torchLit,
+        this.hidingAlmirah !== null,
+        climaxActive,
+        inGracePeriod,
+        chapterConfig,
+        this.stealthFactor,
+        this.isConcealed,
+        highDetail
+      );
 
-    this.proximityIntensity = THREE.MathUtils.damp(
-      this.proximityIntensity,
-      ghostRes.proximityIntensity,
-      4.5,
-      dt
-    );
+      this.proximityIntensity = THREE.MathUtils.damp(
+        this.proximityIntensity,
+        ghostRes.proximityIntensity,
+        4.5,
+        dt
+      );
 
-    if (ghostRes.justStartedChase && !climaxActive) {
-      this.audio.playPlayerGasp();
-    }
+      if (ghostRes.justStartedChase && !climaxActive) {
+        this.audio.playPlayerGasp();
+      }
 
-    if (ghostRes.escapedChase) {
-      this.jumpscaresSurvived += 1;
-      this.audio.playPlayerReaction('escape');
-    }
+      if (ghostRes.escapedChase) {
+        this.jumpscaresSurvived += 1;
+        this.audio.playPlayerReaction('escape');
+      }
 
-    // Heartbeat BPM (72 -> 180)
-    const targetBpm =
-      72 +
-      Math.round(this.proximityIntensity * 96) +
-      (climaxActive ? 14 : 0) +
-      (isSprinting ? 8 : 0);
-    this.bpm = THREE.MathUtils.damp(this.bpm, Math.min(180, targetBpm), 3.2, dt);
-    const roundedBpm = Math.round(this.bpm);
-    if (roundedBpm > this.maxBpm) this.maxBpm = roundedBpm;
+      // Heartbeat BPM (72 -> 180)
+      const targetBpm =
+        72 +
+        Math.round(this.proximityIntensity * 96) +
+        (climaxActive ? 14 : 0) +
+        (isSprinting ? 8 : 0);
+      this.bpm = THREE.MathUtils.damp(this.bpm, Math.min(180, targetBpm), 3.2, dt);
+      const roundedBpm = Math.round(this.bpm);
+      if (roundedBpm > this.maxBpm) this.maxBpm = roundedBpm;
 
-    this.heartbeatTimer -= dt;
-    if (this.heartbeatTimer <= 0 && this.proximityIntensity > 0.14) {
-      this.audio.playHeartbeat(this.proximityIntensity);
-      this.heartbeatTimer = 60 / Math.max(72, this.bpm);
-    }
+      this.heartbeatTimer -= dt;
+      if (this.heartbeatTimer <= 0 && this.proximityIntensity > 0.14) {
+        this.audio.playHeartbeat(this.proximityIntensity);
+        this.heartbeatTimer = 60 / Math.max(72, this.bpm);
+      }
 
-    this.audio.setTension(this.proximityIntensity, climaxActive);
+      this.audio.setTension(this.proximityIntensity, climaxActive);
 
-    const kundBeacon =
-      (this.currentChapter === 5 &&
-        (this.holdingItem !== null || (this.hintActive && this.placedItems.length < 4))) ||
-      (this.currentChapter === 2 &&
-        this.world.notes.every((n) => n.read) &&
-        !this.chapter2Decoded);
-    this.world.havanKund.update(timeSec, climaxActive, 0, kundBeacon);
+      const kundBeacon = Boolean(this.activeChapter.isKundBeaconActive?.(chapterCtx));
+      this.world.havanKund.update(timeSec, climaxActive, 0, kundBeacon);
 
-    // Catch check -> Jumpscare!
-    if (ghostRes.caughtPlayer) {
-      this.phase = 'jumpscare';
-      this.jumpscareTimer = 0;
-      this.maxBpm = Math.max(this.maxBpm, 180);
-      this.bpm = 180;
-      this.audio.playJumpscare();
-      this.emitHud();
-      return;
-    }
-
-    // Final Ritual Climax Countdown
-    if (climaxActive) {
-      this.climaxRemaining = Math.max(0, this.climaxRemaining - dt);
-      if (this.climaxRemaining <= 0) {
-        this.phase = 'victory';
-        this.shantiProgress = 0;
-        this.hidingAlmirah = null;
-        this.releasePointerLock();
-        this.ghostAI.position.set(0, 0, 0);
-        this.ghostRig.root.position.set(0, 0.7, 0);
-        this.playerPos.set(0, 1.65, 5.2);
-        this.camera.position.copy(this.playerPos);
-        this.ghostAI.triggerShanti();
-        this.audio.setTension(0, false);
+      // Catch check -> Jumpscare!
+      if (ghostRes.caughtPlayer) {
+        this.phase = 'jumpscare';
+        this.jumpscareTimer = 0;
+        this.maxBpm = Math.max(this.maxBpm, 180);
+        this.bpm = 180;
+        this.audio.playJumpscare();
         this.emitHud();
         return;
+      }
+
+      // Final Ritual Climax Countdown
+      if (climaxActive) {
+        this.climaxRemaining = Math.max(0, this.climaxRemaining - dt);
+        if (this.climaxRemaining <= 0) {
+          this.phase = 'victory';
+          this.shantiProgress = 0;
+          this.hidingAlmirah = null;
+          this.releasePointerLock();
+          this.ghostAI.position.set(0, 0, 0);
+          this.ghostRig.root.position.set(0, 0.7, 0);
+          this.playerPos.set(0, 1.65, 5.2);
+          this.camera.position.copy(this.playerPos);
+          this.ghostAI.triggerShanti();
+          this.audio.setTension(0, false);
+          this.emitHud();
+          return;
+        }
       }
     }
 
@@ -2193,160 +2270,45 @@ export class MokshaGameEngine {
   }
 
   private getChapterProgress(): number {
-    if (this.currentChapter === 1) {
-      return this.world.shrineDiyas.filter((d) => d.lit).length;
-    }
-    if (this.currentChapter === 2) {
-      return this.world.notes.filter((n) => n.read).length + (this.chapter2Decoded ? 1 : 0);
-    }
-    if (this.currentChapter === 3) {
-      return this.chapter3NextBellIndex;
-    }
-    if (this.currentChapter === 4) {
-      return this.world.cursedSeals.filter((s) => s.broken).length;
-    }
-    return this.placedItems.length;
+    return this.activeChapter.getProgress(this.getChapterContext());
   }
 
   private buildObjectiveText(): string {
     if (this.phase === 'climax') {
       return `Survive the Final Havan (${Math.ceil(this.climaxRemaining)}s)`;
     }
-    if (this.currentChapter === 1) {
-      const lit = this.world.shrineDiyas.filter((d) => d.lit).length;
-      const rem = this.world.shrineDiyas.length - lit;
-      return `Light ${rem} Extinguished Shrine ${rem === 1 ? 'Diya' : 'Diyas'} (${lit}/5)`;
-    }
-    if (this.currentChapter === 2) {
-      const read = this.world.notes.filter((n) => n.read).length;
-      if (read < this.world.notes.length) {
-        return `Inspect 1984 Diary Clues across the Haveli (${read}/4 Read)`;
-      }
-      return 'Return to Central Havan Kund to decode Pandit ji’s Mantra';
-    }
-    if (this.currentChapter === 3) {
-      const nextBell = this.world.chapterBells[this.chapter3NextBellIndex];
-      return nextBell
-        ? `Ring ${nextBell.label} (${this.chapter3NextBellIndex}/4)`
-        : 'All Sacred Bells Rung!';
-    }
-    if (this.currentChapter === 4) {
-      const broken = this.world.cursedSeals.filter((s) => s.broken).length;
-      return `Find & Shatter Crimson Cursed Seals (${broken}/4 Broken)`;
-    }
-    if (this.holdingItem) {
-      return `Offer ${RITUAL_ITEMS[this.holdingItem].name} to the Courtyard Havan Kund`;
-    }
-    const remaining = 4 - this.placedItems.length;
-    return `Find ${remaining} Sacred Ritual ${remaining === 1 ? 'Item' : 'Items'} (${this.placedItems.length}/4 Placed)`;
+    return this.activeChapter.getObjectiveText(this.getChapterContext());
   }
 
   private buildHintMessage(): string | null {
     if (!this.hintActive || this.phase !== 'playing') return null;
-    if (this.currentChapter === 1) {
-      const nextDiya = this.world.shrineDiyas.find((d) => !d.lit);
-      return nextDiya ? `An unlit Shrine Diya awaits in the ${nextDiya.room}...` : null;
-    }
-    if (this.currentChapter === 2) {
-      const nextNote = this.world.notes.find((n) => !n.read);
-      if (nextNote) return `An unread 1984 clue lies in the ${nextNote.data.room}...`;
-      return 'All 4 clues found — return to the Central Aangan Havan Kund!';
-    }
-    if (this.currentChapter === 3) {
-      const nextBell = this.world.chapterBells[this.chapter3NextBellIndex];
-      return nextBell ? `Ring the next hanging brass bell in the ${nextBell.room}...` : null;
-    }
-    if (this.currentChapter === 4) {
-      const nextSeal = this.world.cursedSeals.find((s) => !s.broken);
-      return nextSeal ? `A crimson Tantrik seal pulses inside the ${nextSeal.room}...` : null;
-    }
-    if (this.holdingItem) {
-      return 'Temple bell echoes from the Central Aangan — return to the Havan Kund.';
-    }
-    const uncollected = this.world.ritualItems.find((r) => !r.collected);
-    if (!uncollected) return null;
-    return `A faint temple bell chimes from the ${uncollected.room}...`;
+    return this.activeChapter.getHint(this.getChapterContext());
   }
 
   private buildMinimapData(): MinimapData {
-    const objectives: MinimapObjective[] = [];
+    const ctx = this.getChapterContext();
+    const objectives = this.activeChapter.getMinimapObjectives(ctx);
+    const isOutdoor = this.isOutdoorActive();
 
-    if (this.currentChapter === 1) {
-      for (const d of this.world.shrineDiyas) {
-        if (!d.lit) {
-          objectives.push({ id: d.id, x: d.position.x, z: d.position.z, label: 'Diya', kind: 'diya' });
-        }
-      }
-    } else if (this.currentChapter === 2) {
-      const unread = this.world.notes.filter((n) => !n.read);
-      if (unread.length > 0) {
-        for (const n of unread) {
-          objectives.push({
-            id: n.data.id,
-            x: n.position.x,
-            z: n.position.z,
-            label: 'Clue',
-            kind: 'note',
-          });
-        }
-      } else if (!this.chapter2Decoded) {
-        objectives.push({
-          id: 'kund_decode',
-          x: 0,
-          z: 0,
-          label: 'Havan Kund',
-          kind: 'kund',
-          urgent: true,
-        });
-      }
-    } else if (this.currentChapter === 3) {
-      const nextBell = this.world.chapterBells[this.chapter3NextBellIndex];
-      if (nextBell) {
-        objectives.push({
-          id: nextBell.id,
-          x: nextBell.position.x,
-          z: nextBell.position.z,
-          label: `Bell ${nextBell.orderIndex + 1}`,
-          kind: 'bell',
-          urgent: true,
-        });
-      }
-    } else if (this.currentChapter === 4) {
-      for (const s of this.world.cursedSeals) {
-        if (!s.broken) {
-          objectives.push({
-            id: s.id,
-            x: s.position.x,
-            z: s.position.z,
-            label: 'Seal',
-            kind: 'seal',
-            urgent: true,
-          });
-        }
-      }
-    } else if (this.currentChapter === 5) {
-      if (this.holdingItem) {
-        objectives.push({
-          id: 'kund_offer',
-          x: 0,
-          z: 0,
-          label: 'Havan Kund',
-          kind: 'kund',
-          urgent: true,
-        });
-      } else {
-        for (const item of this.world.ritualItems) {
-          if (!item.collected) {
-            objectives.push({
-              id: item.id,
-              x: item.position.x,
-              z: item.position.z,
-              label: RITUAL_ITEMS[item.id].name,
-              kind: 'item',
-            });
-          }
-        }
-      }
+    if (isOutdoor) {
+      return {
+        mode: 'outdoor',
+        playerX: this.playerPos.x,
+        playerZ: this.playerPos.z,
+        playerYaw: this.playerYaw,
+        ghostX: 0,
+        ghostZ: -99,
+        ghostYaw: 0,
+        ghostRoom: 'Haveli',
+        ghostDistance: 99,
+        objectives,
+        almirahs: [],
+        dogX: this.outdoorWorld.dog.position.x,
+        dogZ: this.outdoorWorld.dog.position.z,
+        pawTrailVisible: this.outdoorWorld.pawPrintGroup.visible,
+        pawTrail: this.outdoorWorld.pawTrailCoords,
+        landmarks: this.outdoorWorld.landmarks,
+      };
     }
 
     const ghostDist = Math.hypot(
@@ -2355,6 +2317,7 @@ export class MokshaGameEngine {
     );
 
     return {
+      mode: 'haveli',
       playerX: this.playerPos.x,
       playerZ: this.playerPos.z,
       playerYaw: this.playerYaw,
@@ -2376,9 +2339,10 @@ export class MokshaGameEngine {
     const prompt = this.getCurrentPrompt();
     const collectedCount = this.world.ritualItems.filter((r) => r.collected).length;
     const config = DIFFICULTY_CONFIGS[this.difficulty];
-    const chapterMeta = CHAPTER_CONFIGS[this.currentChapter];
+    const chapterMeta = CHAPTER_CONFIGS[this.currentChapter] ?? this.activeChapter.config;
+    const isOutdoor = this.isOutdoorActive();
     const graceRemaining =
-      this.phase === 'playing'
+      !isOutdoor && this.phase === 'playing'
         ? Math.max(0, Math.ceil(config.spawnGracePeriod - this.elapsedSeconds))
         : 0;
 
@@ -2397,7 +2361,7 @@ export class MokshaGameEngine {
         maxHp: Math.max(1, Math.round(this.activeCombatEnemy.maxHp)),
         staggered: this.activeCombatEnemy.isStaggered,
       };
-    } else {
+    } else if (!isOutdoor) {
       // Auto-detect any nearby mortal boss/monster within 14m
       for (let i = 0; i < this.combatEnemies.length; i++) {
         const e = this.combatEnemies[i];
@@ -2420,6 +2384,8 @@ export class MokshaGameEngine {
     this.onHudUpdate({
       phase: this.phase,
       chapter: this.currentChapter,
+      totalChapters: TOTAL_CHAPTERS,
+      isOutdoor,
       chapterProgress: this.getChapterProgress(),
       chapterTarget: chapterMeta.targetCount,
       chapterTaskLabel: chapterMeta.taskLabel,
@@ -2427,6 +2393,11 @@ export class MokshaGameEngine {
       itemsPlacedCount: this.placedItems.length,
       placedItems: [...this.placedItems],
       holdingItem: this.holdingItem ? RITUAL_ITEMS[this.holdingItem] : null,
+      playerHealth: Math.round(this.playerHealth),
+      damageFlash: this.damageFlash,
+      checkpointBanner: this.checkpointBanner,
+      injuredReason: this.injuredReason,
+      activeCheckpointLabel: this.activeCheckpoint.label,
       stamina: Math.round(this.stamina),
       battery: Math.round(this.battery),
       flashlightOn: this.flashlightOn,
@@ -2435,7 +2406,9 @@ export class MokshaGameEngine {
       isHiding: this.hidingAlmirah !== null,
       nearPrompt: prompt.text,
       promptKey: prompt.key,
-      roomName: this.world.getRoomName(this.playerPos.x, this.playerPos.z),
+      roomName: isOutdoor
+        ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
+        : this.world.getRoomName(this.playerPos.x, this.playerPos.z),
       climaxRemaining: this.climaxRemaining,
       elapsedSeconds: this.elapsedSeconds,
       jumpscaresSurvived: this.jumpscaresSurvived,

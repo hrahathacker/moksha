@@ -17,6 +17,7 @@ import {
   generateReportCardDataUrl,
   getIndianRankTitle,
 } from '../game/reportCard';
+import { FINAL_CHAPTER_ID, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
 import { VictorySongData } from '../game/types';
 
 interface EndScreenProps {
@@ -92,8 +93,8 @@ export const EndScreen: React.FC<EndScreenProps> = ({
               style={{ color: stats.victory ? '#eab354' : '#e0585c' }}
             >
               {stats.victory
-                ? 'Chapter 5 Finale Complete · Moksha Achieved'
-                : `Game Over · Chapter ${stats.chapter ?? 1} of 5`}
+                ? `Chapter ${FINAL_CHAPTER_ID} Finale Complete · Moksha Achieved`
+                : `Game Over · Chapter ${stats.chapter ?? 1} of ${TOTAL_CHAPTERS}`}
             </p>
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#f5efe2] tracking-wide">
               {stats.victory ? 'Atma Ko Shanti Mili' : 'Haveli Ne Nigal Liya'}

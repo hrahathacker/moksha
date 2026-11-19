@@ -30,6 +30,14 @@ export interface ProceduralTexturePack {
   parchmentColor: THREE.CanvasTexture;
   contactShadow: THREE.CanvasTexture;
   softParticle: THREE.CanvasTexture;
+  mudColor: THREE.CanvasTexture;
+  mudBump: THREE.CanvasTexture;
+  mudRoughness: THREE.CanvasTexture;
+  foliageColor: THREE.CanvasTexture;
+  foliageBump: THREE.CanvasTexture;
+  barkColor: THREE.CanvasTexture;
+  barkBump: THREE.CanvasTexture;
+  pawPrintColor: THREE.CanvasTexture;
   dispose: () => void;
 }
 
@@ -988,6 +996,214 @@ function generateSoftParticle(): THREE.CanvasTexture {
   return tex;
 }
 
+/**
+ * Damp North Indian village dirt & mud path with pebbles and glossy damp patches in roughnessMap.
+ */
+function generateVillageMud(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
+  const rand = mulberry32(4109);
+  const [cCanvas, ctx] = makeCanvas(size, size);
+  const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
+
+  ctx.fillStyle = '#2c231a';
+  ctx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = '#787878';
+  bCtx.fillRect(0, 0, size, size);
+  rCtx.fillStyle = '#d4d4d4';
+  rCtx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 160; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 10 + rand() * 34;
+    const damp = rand() > 0.55;
+    const g = ctx.createRadialGradient(x, y, 2, x, y, r);
+    g.addColorStop(0, damp ? 'rgba(26, 36, 26, 0.44)' : 'rgba(66, 52, 36, 0.34)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (damp) {
+      const rg = rCtx.createRadialGradient(x, y, 1, x, y, r * 0.78);
+      rg.addColorStop(0, 'rgba(58, 58, 58, 0.75)');
+      rg.addColorStop(1, 'rgba(212, 212, 212, 0)');
+      rCtx.fillStyle = rg;
+      rCtx.beginPath();
+      rCtx.arc(x, y, r * 0.78, 0, Math.PI * 2);
+      rCtx.fill();
+    }
+  }
+
+  for (let i = 0; i < 620; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rad = 1 + rand() * 2.8;
+    const v = Math.floor(38 + rand() * 52);
+    ctx.fillStyle = `rgba(${v + 18}, ${v + 8}, ${v - 4}, 0.65)`;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+
+    const bv = Math.floor(110 + rand() * 120);
+    bCtx.fillStyle = `rgb(${bv},${bv},${bv})`;
+    bCtx.beginPath();
+    bCtx.arc(x, y, rad, 0, Math.PI * 2);
+    bCtx.fill();
+  }
+
+  return [
+    finalizeTexture(cCanvas, true, anisotropy, 16, 16),
+    finalizeTexture(bCanvas, false, anisotropy, 16, 16),
+    finalizeTexture(rCanvas, false, anisotropy, 16, 16),
+  ];
+}
+
+/**
+ * Gnarled Banyan / Peepal tree bark with deep vertical crevices and moss.
+ */
+function generateTreeBark(anisotropy: number): [THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
+  const rand = mulberry32(7331);
+  const [cCanvas, ctx] = makeCanvas(size, size);
+  const [bCanvas, bCtx] = makeCanvas(size, size);
+
+  ctx.fillStyle = '#2d241c';
+  ctx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = '#707070';
+  bCtx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 120; i++) {
+    const x = rand() * size;
+    const w = 2 + rand() * 7;
+    const tone = Math.floor(34 + rand() * 38);
+    ctx.fillStyle = `rgb(${tone + 14}, ${tone + 6}, ${tone - 2})`;
+    ctx.fillRect(x, 0, w, size);
+
+    const bv = Math.floor(55 + rand() * 155);
+    bCtx.fillStyle = `rgb(${bv},${bv},${bv})`;
+    bCtx.fillRect(x, 0, w, size);
+  }
+
+  for (let i = 0; i < 65; i++) {
+    let x = rand() * size;
+    ctx.strokeStyle = rand() > 0.72 ? 'rgba(34, 58, 40, 0.55)' : 'rgba(14, 10, 8, 0.72)';
+    ctx.lineWidth = 1.4 + rand() * 2.2;
+    bCtx.strokeStyle = '#1a1a1a';
+    bCtx.lineWidth = ctx.lineWidth;
+    ctx.beginPath();
+    bCtx.beginPath();
+    ctx.moveTo(x, 0);
+    bCtx.moveTo(x, 0);
+    for (let y = 16; y <= size; y += 16) {
+      x += (rand() - 0.5) * 6;
+      ctx.lineTo(x, y);
+      bCtx.lineTo(x, y);
+    }
+    ctx.stroke();
+    bCtx.stroke();
+  }
+
+  return [
+    finalizeTexture(cCanvas, true, anisotropy, 2, 3),
+    finalizeTexture(bCanvas, false, anisotropy, 2, 3),
+  ];
+}
+
+/**
+ * Nocturnal leafy Banyan / Tulsi / bush foliage texture.
+ */
+function generateFoliage(anisotropy: number): [THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
+  const rand = mulberry32(9911);
+  const [cCanvas, ctx] = makeCanvas(size, size);
+  const [bCanvas, bCtx] = makeCanvas(size, size);
+
+  ctx.fillStyle = '#17291c';
+  ctx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = '#505050';
+  bCtx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 420; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rx = 5 + rand() * 11;
+    const ry = 3 + rand() * 6;
+    const rot = rand() * Math.PI;
+    const gVal = Math.floor(38 + rand() * 48);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.fillStyle = `rgb(${Math.floor(gVal * 0.48)}, ${gVal + 14}, ${Math.floor(gVal * 0.58)})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const bv = Math.floor(90 + rand() * 135);
+    bCtx.save();
+    bCtx.translate(x, y);
+    bCtx.rotate(rot);
+    bCtx.fillStyle = `rgb(${bv},${bv},${bv})`;
+    bCtx.beginPath();
+    bCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    bCtx.fill();
+    bCtx.restore();
+  }
+
+  return [
+    finalizeTexture(cCanvas, true, anisotropy, 2, 2),
+    finalizeTexture(bCanvas, false, anisotropy, 2, 2),
+  ];
+}
+
+/**
+ * Glowing muddy canine paw print decal (128x128 transparent canvas) for the Chapter 1 trail.
+ */
+function generatePawPrint(anisotropy: number): THREE.CanvasTexture {
+  const size = 128;
+  const [canvas, ctx] = makeCanvas(size, size);
+  ctx.clearRect(0, 0, size, size);
+
+  const halo = ctx.createRadialGradient(64, 66, 8, 64, 66, 56);
+  halo.addColorStop(0, 'rgba(235, 195, 110, 0.58)');
+  halo.addColorStop(0.55, 'rgba(130, 198, 208, 0.24)');
+  halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, size, size);
+
+  const drawPad = (x: number, y: number, rx: number, ry: number, rot = 0) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.fillStyle = 'rgba(246, 212, 134, 0.92)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(66, 46, 28, 0.65)';
+    ctx.beginPath();
+    ctx.ellipse(0, 1, rx * 0.68, ry * 0.68, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  drawPad(64, 82, 20, 16, 0);
+  drawPad(35, 55, 9, 13, -0.35);
+  drawPad(53, 41, 9.5, 14, -0.12);
+  drawPad(75, 41, 9.5, 14, 0.12);
+  drawPad(93, 55, 9, 13, 0.35);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = anisotropy;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export function createProceduralTextures(
   renderer: THREE.WebGLRenderer,
   isMobile = false
@@ -1009,6 +1225,10 @@ export function createProceduralTextures(
   const parchmentColor = generateParchment(aniso);
   const contactShadow = generateContactShadow();
   const softParticle = generateSoftParticle();
+  const [mudColor, mudBump, mudRoughness] = generateVillageMud(aniso);
+  const [foliageColor, foliageBump] = generateFoliage(aniso);
+  const [barkColor, barkBump] = generateTreeBark(aniso);
+  const pawPrintColor = generatePawPrint(aniso);
 
   const all = [
     plasterColor,
@@ -1040,6 +1260,14 @@ export function createProceduralTextures(
     parchmentColor,
     contactShadow,
     softParticle,
+    mudColor,
+    mudBump,
+    mudRoughness,
+    foliageColor,
+    foliageBump,
+    barkColor,
+    barkBump,
+    pawPrintColor,
   ];
 
   return {
@@ -1072,6 +1300,14 @@ export function createProceduralTextures(
     parchmentColor,
     contactShadow,
     softParticle,
+    mudColor,
+    mudBump,
+    mudRoughness,
+    foliageColor,
+    foliageBump,
+    barkColor,
+    barkBump,
+    pawPrintColor,
     dispose: () => {
       all.forEach((t) => t.dispose());
     },

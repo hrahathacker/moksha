@@ -3,6 +3,7 @@ import { AIStoryModal } from './components/AIStoryModal';
 import { ChapterCompleteModal } from './components/ChapterCompleteModal';
 import { EndScreen } from './components/EndScreen';
 import { GameHud } from './components/GameHud';
+import { InjuredReviveModal } from './components/InjuredReviveModal';
 import { LandscapeGate } from './components/LandscapeGate';
 import { MissionBriefingModal } from './components/MissionBriefingModal';
 import { MobileControls } from './components/MobileControls';
@@ -10,6 +11,12 @@ import { NoteModal } from './components/NoteModal';
 import { PauseMenu } from './components/PauseMenu';
 import { OfflineIndicator } from './components/PWAInstallButton';
 import { TitleScreen } from './components/TitleScreen';
+import {
+  FINAL_CHAPTER_ID,
+  TOTAL_CHAPTERS,
+  getNextChapterId,
+  isValidChapterId,
+} from './chapters/chapterRegistry';
 import {
   acquireScreenWakeLock,
   enterAndroidLandscapeFullscreen,
@@ -27,7 +34,7 @@ import {
   HudSnapshot,
 } from './game/types';
 
-const COMPLETED_STORAGE_KEY = 'moksha_completed_chapters_v1';
+const COMPLETED_STORAGE_KEY = 'moksha_completed_chapters_v2';
 const TOUCH_SENS_STORAGE_KEY = 'moksha_touch_sens_v1';
 
 function loadTouchSensitivity(): number {
@@ -44,13 +51,20 @@ function loadTouchSensitivity(): number {
 const INITIAL_HUD: HudSnapshot = {
   phase: 'title',
   chapter: 1,
+  totalChapters: TOTAL_CHAPTERS,
+  isOutdoor: true,
   chapterProgress: 0,
-  chapterTarget: 5,
-  chapterTaskLabel: 'Shrine Diyas Lit',
+  chapterTarget: 6,
+  chapterTaskLabel: 'Trail Milestones',
   itemsCollectedCount: 0,
   itemsPlacedCount: 0,
   placedItems: [],
   holdingItem: null,
+  playerHealth: 100,
+  damageFlash: 0,
+  checkpointBanner: null,
+  injuredReason: null,
+  activeCheckpointLabel: 'Village Path Start',
   stamina: 100,
   battery: 100,
   flashlightOn: true,
@@ -59,7 +73,7 @@ const INITIAL_HUD: HudSnapshot = {
   isHiding: false,
   nearPrompt: null,
   promptKey: 'E',
-  roomName: 'Central Aangan',
+  roomName: 'Misty Village Path',
   climaxRemaining: 10,
   elapsedSeconds: 0,
   jumpscaresSurvived: 0,
@@ -72,8 +86,9 @@ const INITIAL_HUD: HudSnapshot = {
   jumpscareFlash: 0,
   shantiProgress: 0,
   graceRemaining: 0,
-  objectiveText: 'Light 5 Extinguished Shrine Diyas (0/5)',
+  objectiveText: 'Turn around and follow the barking dog into the village outskirts',
   mapData: {
+    mode: 'haveli',
     playerX: 0,
     playerZ: 11.4,
     playerYaw: 0,
@@ -101,7 +116,7 @@ function loadCompletedChapters(): ChapterNumber[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((n): n is ChapterNumber => [1, 2, 3, 4, 5].includes(n));
+    return parsed.filter(isValidChapterId);
   } catch {
     return [];
   }
@@ -233,9 +248,14 @@ export default function App() {
       markChapterCompleted(hud.chapter);
       setMapExpanded(false);
     } else if (hud.phase === 'victory') {
-      markChapterCompleted(5);
+      markChapterCompleted(FINAL_CHAPTER_ID);
       setMapExpanded(false);
-    } else if (hud.phase === 'gameover' || hud.phase === 'paused' || hud.phase === 'title') {
+    } else if (
+      hud.phase === 'gameover' ||
+      hud.phase === 'injured' ||
+      hud.phase === 'paused' ||
+      hud.phase === 'title'
+    ) {
       setMapExpanded(false);
     }
   }, [hud.phase, hud.chapter, markChapterCompleted]);
@@ -393,11 +413,19 @@ export default function App() {
   }, [settings.difficulty, hud.phase, hud.chapter, isTouchDevice]);
 
   const handleNextChapter = useCallback(() => {
-    const nextCh = Math.min(5, hud.chapter + 1) as ChapterNumber;
+    const nextCh = getNextChapterId(hud.chapter) ?? FINAL_CHAPTER_ID;
     setSelectedChapter(nextCh);
     setMapExpanded(false);
     engineRef.current?.startChapterDirect(settings.difficulty, nextCh, true);
   }, [settings.difficulty, hud.chapter]);
+
+  const handleReviveAtCheckpoint = useCallback(() => {
+    setMapExpanded(false);
+    if (isTouchDevice) {
+      void enterAndroidLandscapeFullscreen();
+    }
+    engineRef.current?.reviveAtCheckpoint();
+  }, [isTouchDevice]);
 
   const handleReplayCurrentChapter = useCallback(() => {
     setMapExpanded(false);
@@ -496,10 +524,11 @@ export default function App() {
         onMouseLeave={handleCanvasMouseUp}
       />
 
-      {/* Active Gameplay HUD, Live Ghost Radar & Cinematic Moksha Finale */}
+      {/* Active Gameplay HUD, Live Radar/Village Map & Cinematic Moksha Finale */}
       {hud.phase !== 'title' &&
         hud.phase !== 'story' &&
         hud.phase !== 'briefing' &&
+        hud.phase !== 'injured' &&
         hud.phase !== 'chapter_complete' && (
           <GameHud
             hud={hud}
@@ -589,7 +618,17 @@ export default function App() {
         />
       )}
 
-      {/* Chapter 1-4 Completion Modal */}
+      {/* Outdoor Hazard Injury & Checkpoint Revive Modal */}
+      {hud.phase === 'injured' && (
+        <InjuredReviveModal
+          reason={hud.injuredReason ?? 'You were injured by a village hazard!'}
+          checkpointLabel={hud.activeCheckpointLabel}
+          onRevive={handleReviveAtCheckpoint}
+          onReturnTitle={handleReturnTitle}
+        />
+      )}
+
+      {/* Chapter Completion Modal */}
       {hud.phase === 'chapter_complete' && (
         <ChapterCompleteModal
           completedChapter={hud.chapter}

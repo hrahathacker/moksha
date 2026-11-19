@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Volume2, VolumeX, Play, Flame, BookOpen, Check, Maximize, Minimize } from 'lucide-react';
+import { CHAPTER_CONFIGS, CHAPTER_LIST, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
 import {
-  CHAPTER_CONFIGS,
   ChapterNumber,
   DIFFICULTY_CONFIGS,
   Difficulty,
@@ -155,8 +155,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 The Last Ritual
               </p>
               <p className="text-xs lg:text-sm text-[#b4c2c4] max-w-md leading-relaxed">
-                5 chapters of 1984 haveli survival horror — unique ritual tasks, live Ghost Radar
-                Map, built-in Hindi backstory, and Moksha Geet finale.
+                {TOTAL_CHAPTERS} chapters of 1984 Indian survival horror — misty village outskirts
+                prologue, haunted haveli rituals, live map, Hindi voice acting, and Moksha Geet
+                finale.
               </p>
             </div>
 
@@ -189,30 +190,30 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="sm:col-span-6 p-3.5 lg:p-5 rounded-sm border border-white/12 space-y-3 lg:space-y-4"
             style={{ backgroundColor: 'rgba(8, 15, 18, 0.84)' }}
           >
-            {/* 5-Chapter Campaign Selector */}
+            {/* Dynamic 6-Chapter Campaign Selector (All Selectable Anytime) */}
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2 text-[11px] lg:text-xs text-[#8ea2a5]">
-                <span>Campaign (5 Chapters)</span>
+                <span>Campaign ({TOTAL_CHAPTERS} Chapters)</span>
                 <span className="text-[#f0c574] font-medium truncate">
                   Ch {selectedChapter}: {activeChapter.title}
                 </span>
               </div>
-              <div className="grid grid-cols-5 gap-1.5">
-                {([1, 2, 3, 4, 5] as ChapterNumber[]).map((chNum) => {
-                  const selected = selectedChapter === chNum;
-                  const done = completedChapters.includes(chNum);
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {CHAPTER_LIST.map((ch) => {
+                  const selected = selectedChapter === ch.id;
+                  const done = completedChapters.includes(ch.id);
                   return (
                     <button
-                      key={chNum}
+                      key={ch.id}
                       type="button"
-                      onClick={() => onSelectChapter(chNum)}
+                      onClick={() => onSelectChapter(ch.id)}
                       className={`py-1.5 lg:py-2 px-1 text-[11px] lg:text-xs font-medium rounded-sm border transition-colors cursor-pointer flex items-center justify-center gap-1 whitespace-nowrap ${
                         selected
                           ? 'bg-[#b8322b]/30 border-[#e06a62] text-[#fff1e2]'
                           : 'bg-[#0a1316]/85 border-white/10 text-[#9db0b2] hover:border-white/25 hover:text-[#e8e2d5]'
                       }`}
                     >
-                      <span className="font-mono-tabular">Ch {chNum}</span>
+                      <span className="font-mono-tabular">Ch {ch.id}</span>
                       {done && <Check className="w-3 h-3 text-[#74d19a] shrink-0" />}
                     </button>
                   );

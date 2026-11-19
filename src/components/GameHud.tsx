@@ -10,9 +10,11 @@ import {
   Maximize,
   Minimize,
   EyeOff,
+  Flag,
+  Heart,
 } from 'lucide-react';
+import { CHAPTER_CONFIGS } from '../chapters/chapterRegistry';
 import {
-  CHAPTER_CONFIGS,
   DIFFICULTY_CONFIGS,
   Difficulty,
   HudSnapshot,
@@ -90,6 +92,18 @@ export const GameHud: React.FC<GameHudProps> = ({
             opacity: hud.attackHitFlash * 0.45,
             background:
               'radial-gradient(circle at center, rgba(255, 226, 148, 0.45) 0%, rgba(235, 168, 56, 0.14) 55%, transparent 100%)',
+          }}
+        />
+      )}
+
+      {/* 1C. Outdoor Hazard Red Damage Flash (Thorns & Scorpion Sting) */}
+      {hud.damageFlash > 0.04 && (
+        <div
+          className="absolute inset-0"
+          style={{
+            opacity: Math.min(0.88, hud.damageFlash * 0.8),
+            background:
+              'radial-gradient(circle at center, rgba(185, 24, 30, 0.22) 25%, rgba(168, 14, 22, 0.78) 100%)',
           }}
         />
       )}
@@ -211,7 +225,7 @@ export const GameHud: React.FC<GameHudProps> = ({
             >
               <div className="flex items-center justify-between gap-2 text-[9px] sm:text-[10px] tracking-[0.14em] text-[#e5a94c] uppercase font-medium">
                 <span className="truncate">
-                  Ch {hud.chapter}/5 · {chapterMeta.title}
+                  Ch {hud.chapter}/{hud.totalChapters} · {chapterMeta.title}
                 </span>
                 <span className="font-mono-tabular text-[#b8c6c7] shrink-0">
                   {formatTime(hud.elapsedSeconds)}
@@ -231,9 +245,30 @@ export const GameHud: React.FC<GameHudProps> = ({
                   : hud.objectiveText}
               </p>
 
-              {/* Compact inline Stamina & Torch bars on Android landscape (zero overlap with Left Joystick!) */}
+              {/* Compact inline Health / Stamina / Torch bars on Android landscape */}
               {isTouchDevice && (
-                <div className="mt-1.5 pt-1.5 border-t border-white/10 grid grid-cols-2 gap-2">
+                <div
+                  className={`mt-1.5 pt-1.5 border-t border-white/10 grid gap-2 ${
+                    hud.isOutdoor ? 'grid-cols-3' : 'grid-cols-2'
+                  }`}
+                >
+                  {hud.isOutdoor && (
+                    <div className="space-y-0.5">
+                      <div className="flex items-center justify-between text-[9px] text-[#c7a0a2]">
+                        <span>HP</span>
+                        <span className="font-mono-tabular text-[#f0dede]">{hud.playerHealth}%</span>
+                      </div>
+                      <div className="h-1 w-full bg-white/12 overflow-hidden">
+                        <div
+                          className="h-full transition-transform duration-75 origin-left"
+                          style={{
+                            backgroundColor: hud.playerHealth <= 50 ? '#e0484b' : '#58c47a',
+                            transform: `scaleX(${hud.playerHealth / 100})`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                   <div className="space-y-0.5">
                     <div className="flex items-center justify-between text-[9px] text-[#9ab0b2]">
                       <span>Stamina</span>
@@ -320,17 +355,21 @@ export const GameHud: React.FC<GameHudProps> = ({
                     </span>
                   </div>
                   <div className="text-[8px] sm:text-[10px] tracking-[0.12em] uppercase text-[#889d9f] mt-0.5">
-                    {hud.isConcealed
-                      ? 'HIDDEN'
-                      : hud.isHiding && hud.flashlightOn
-                        ? 'TORCH OFF!'
-                        : hud.ghostState === 'staggered'
-                          ? 'REPELLED'
-                          : isCritical
-                            ? 'SHE IS NEAR'
-                            : isDanger
-                              ? 'PULSE UP'
-                              : 'HEART'}
+                    {hud.isOutdoor
+                      ? hud.playerHealth <= 50
+                        ? 'INJURED'
+                        : 'OUTSKIRTS'
+                      : hud.isConcealed
+                        ? 'HIDDEN'
+                        : hud.isHiding && hud.flashlightOn
+                          ? 'TORCH OFF!'
+                          : hud.ghostState === 'staggered'
+                            ? 'REPELLED'
+                            : isCritical
+                              ? 'SHE IS NEAR'
+                              : isDanger
+                                ? 'PULSE UP'
+                                : 'HEART'}
                   </div>
                 </div>
               </div>
@@ -441,6 +480,17 @@ export const GameHud: React.FC<GameHudProps> = ({
                 </span>
               </div>
             )}
+
+            {/* Clean Top-Center Checkpoint Saved Toast (Outdoor Chapter 1) */}
+            {hud.checkpointBanner && (
+              <div
+                className="px-3.5 py-1.5 rounded-sm border border-[#e5a94c]/50 flex items-center gap-2 text-[10px] sm:text-xs tracking-[0.12em] uppercase text-[#f6e3ba]"
+                style={{ backgroundColor: 'rgba(10, 14, 14, 0.88)' }}
+              >
+                <Flag className="w-3.5 h-3.5 text-[#e5a94c] shrink-0" />
+                <span>{hud.checkpointBanner}</span>
+              </div>
+            )}
           </div>
 
           {/* CENTER CROSSHAIR & INTERACTION PROMPT */}
@@ -496,6 +546,27 @@ export const GameHud: React.FC<GameHudProps> = ({
               className="absolute bottom-5 left-5 px-3.5 py-2.5 rounded-sm border border-white/10 space-y-2 w-56"
               style={{ backgroundColor: 'rgba(6, 12, 14, 0.78)' }}
             >
+              {hud.isOutdoor && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-[#c7a0a2]">
+                    <span className="flex items-center gap-1.5">
+                      <Heart className="w-3.5 h-3.5 text-[#e05255]" />
+                      <span>Health</span>
+                    </span>
+                    <span className="font-mono-tabular text-[#f0dede]">{hud.playerHealth}%</span>
+                  </div>
+                  <div className="h-1.5 w-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full transition-transform duration-75 origin-left"
+                      style={{
+                        backgroundColor: hud.playerHealth <= 50 ? '#e0484b' : '#58c47a',
+                        transform: `scaleX(${hud.playerHealth / 100})`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-[11px] text-[#9ab0b2]">
                   <span>Stamina</span>
