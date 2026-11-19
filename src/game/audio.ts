@@ -102,6 +102,7 @@ export class HorrorAudioManager {
   private songOscs: OscillatorNode[] = [];
   private activeSongData: VictorySongData | null = null;
   private onSongStateChange?: (playing: boolean, lyricIndex: number) => void;
+  private boundGestureUnlock: () => void;
 
   constructor(
     onSubtitle?: (sub: SubtitleState | null) => void,
@@ -110,6 +111,18 @@ export class HorrorAudioManager {
     this.onSubtitle = onSubtitle;
     if (customTracks) {
       this.customTracks = customTracks;
+    }
+
+    // Explicitly create & resume Web Audio API AudioContext on the very first touchstart or click
+    // so procedural horror music, payal SFX, heartbeat, and jumpscares work cleanly in Android WebView.
+    this.boundGestureUnlock = () => {
+      if (!this.ctx || this.ctx.state !== 'running') {
+        this.unlock();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('touchstart', this.boundGestureUnlock, { passive: true, capture: true });
+      window.addEventListener('click', this.boundGestureUnlock, { passive: true, capture: true });
     }
   }
 
@@ -134,14 +147,14 @@ export class HorrorAudioManager {
       this.startAmbientLayers();
     }
 
-    if (this.ctx.state === 'suspended') {
+    if (this.ctx.state !== 'running') {
       this.ctx.resume().catch(() => {});
     }
     this.unlocked = true;
   }
 
   /**
-   * Local instant voice initialization — zero runtime API calls so phones never wait or fail.
+   * Local instant voice initialization — zero runtime API calls or MP3 files.
    */
   public prewarmGhostVoices(): void {
     if (this.prewarmStarted) return;
@@ -156,12 +169,23 @@ export class HorrorAudioManager {
   }
 
   /**
-   * Speaks story chapter text locally using Hindi/Indian voice synthesis with atmospheric chime.
+   * Speaks story chapter text offline using Android Capacitor WebView AndroidTTS when available,
+   * falling back to browser Web Speech API (window.speechSynthesis).
    */
   public playLocalStoryNarration(text: string): void {
     this.stopStoryNarration();
     this.unlock();
     if (this.muted) return;
+
+    const androidTTS = typeof window !== 'undefined' ? (window as any).AndroidTTS : undefined;
+    if (androidTTS && typeof androidTTS.speak === 'function') {
+      try {
+        androidTTS.speak(text, 0.82, 0.88);
+        return;
+      } catch {
+        // fall through to browser speechSynthesis if bridge throws
+      }
+    }
 
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
@@ -199,6 +223,14 @@ export class HorrorAudioManager {
       this.narrationAudioEl.pause();
       this.narrationAudioEl = null;
     }
+    const androidTTS = typeof window !== 'undefined' ? (window as any).AndroidTTS : undefined;
+    if (androidTTS && typeof androidTTS.stop === 'function') {
+      try {
+        androidTTS.stop();
+      } catch {
+        // ignore
+      }
+    }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -216,11 +248,21 @@ export class HorrorAudioManager {
   public setMuted(muted: boolean): void {
     this.muted = muted;
     this.applyMasterGain();
-    if (muted && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        // ignore
+    if (muted) {
+      const androidTTS = typeof window !== 'undefined' ? (window as any).AndroidTTS : undefined;
+      if (androidTTS && typeof androidTTS.stop === 'function') {
+        try {
+          androidTTS.stop();
+        } catch {
+          // ignore
+        }
+      }
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // ignore
+        }
       }
     }
   }
@@ -1037,9 +1079,20 @@ export class HorrorAudioManager {
       return;
     }
 
-    // Fallback: eerie whispered formants + low creepy Web Speech API
+    // Procedural eerie whispered formants (100% Web Audio, zero MP3s)
     this.playSynthWhisperFallback();
 
+    // 1. Inside Android Capacitor WebView: use native offline AndroidTTS bridge first
+    if (typeof window !== 'undefined' && (window as any).AndroidTTS) {
+      try {
+        (window as any).AndroidTTS.speak(line.hindi, 0.65, 0.78);
+        return;
+      } catch {
+        // whisper fallback already active
+      }
+    }
+
+    // 2. Normal web browser: keep existing window.speechSynthesis fallback
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -1347,6 +1400,10 @@ export class HorrorAudioManager {
   }
 
   public dispose(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('touchstart', this.boundGestureUnlock, { capture: true });
+      window.removeEventListener('click', this.boundGestureUnlock, { capture: true });
+    }
     this.stopStoryNarration();
     this.stopVictorySong();
     if (this.subtitleTimeout !== null) {
