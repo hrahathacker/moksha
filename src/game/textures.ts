@@ -3,10 +3,22 @@ import * as THREE from 'three';
 export interface ProceduralTexturePack {
   plasterColor: THREE.CanvasTexture;
   plasterBump: THREE.CanvasTexture;
+  plasterRoughness: THREE.CanvasTexture;
   stoneColor: THREE.CanvasTexture;
   stoneBump: THREE.CanvasTexture;
+  stoneRoughness: THREE.CanvasTexture;
   woodColor: THREE.CanvasTexture;
   woodBump: THREE.CanvasTexture;
+  woodRoughness: THREE.CanvasTexture;
+  brassColor: THREE.CanvasTexture;
+  brassBump: THREE.CanvasTexture;
+  brassRoughness: THREE.CanvasTexture;
+  ironColor: THREE.CanvasTexture;
+  ironBump: THREE.CanvasTexture;
+  ironRoughness: THREE.CanvasTexture;
+  torchGripColor: THREE.CanvasTexture;
+  torchGripBump: THREE.CanvasTexture;
+  torchGripRoughness: THREE.CanvasTexture;
   jaliColor: THREE.CanvasTexture;
   jaliAlpha: THREE.CanvasTexture;
   tapestryColor: THREE.CanvasTexture;
@@ -17,6 +29,7 @@ export interface ProceduralTexturePack {
   ghostFaceColor: THREE.CanvasTexture;
   parchmentColor: THREE.CanvasTexture;
   contactShadow: THREE.CanvasTexture;
+  softParticle: THREE.CanvasTexture;
   dispose: () => void;
 }
 
@@ -58,57 +71,67 @@ function finalizeTexture(
   return tex;
 }
 
-function generatePeelingPlaster(anisotropy: number): [THREE.CanvasTexture, THREE.CanvasTexture] {
-  const size = 512;
+/**
+ * Cracked damp 1984 haveli lime plaster with exposed Lakhori brickwork,
+ * peeling edges, deep hairline cracks, and damp specular streaks in roughnessMap.
+ */
+function generatePeelingPlaster(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
   const rand = mulberry32(1984);
   const [cCanvas, ctx] = makeCanvas(size, size);
   const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
 
   // Underlying damp red-brown haveli brick layer
-  ctx.fillStyle = '#3b241d';
+  ctx.fillStyle = '#361f19';
   ctx.fillRect(0, 0, size, size);
-  bCtx.fillStyle = '#303030';
+  bCtx.fillStyle = '#282828';
   bCtx.fillRect(0, 0, size, size);
+  // Bricks are slightly damper/rougher matte (~215)
+  rCtx.fillStyle = '#d4d4d4';
+  rCtx.fillRect(0, 0, size, size);
 
-  // Draw weathered thin Nanakshahi/Lakhori haveli bricks
-  const brickH = 22;
-  const brickW = 64;
+  // Thin weathered Lakhori haveli bricks
+  const brickH = 11;
+  const brickW = 32;
   for (let row = 0; row < size / brickH + 1; row++) {
     const offset = (row % 2) * (brickW * 0.5);
     for (let col = -1; col < size / brickW + 2; col++) {
       const x = col * brickW + offset;
       const y = row * brickH;
-      const tone = Math.floor(42 + rand() * 32);
-      ctx.fillStyle = `rgb(${tone + 26}, ${Math.floor(tone * 0.7)}, ${Math.floor(tone * 0.52)})`;
-      ctx.fillRect(x + 2, y + 2, brickW - 4, brickH - 4);
-      bCtx.fillStyle = `rgb(${75 + Math.floor(rand() * 35)}, ${75 + Math.floor(rand() * 35)}, ${75 + Math.floor(rand() * 35)})`;
-      bCtx.fillRect(x + 2, y + 2, brickW - 4, brickH - 4);
+      const tone = Math.floor(38 + rand() * 34);
+      ctx.fillStyle = `rgb(${tone + 26}, ${Math.floor(tone * 0.68)}, ${Math.floor(tone * 0.5)})`;
+      ctx.fillRect(x + 1, y + 1, brickW - 2, brickH - 2);
+      const bv = 72 + Math.floor(rand() * 44);
+      bCtx.fillStyle = `rgb(${bv}, ${bv}, ${bv})`;
+      bCtx.fillRect(x + 1, y + 1, brickW - 2, brickH - 2);
+      const rv = 195 + Math.floor(rand() * 45);
+      rCtx.fillStyle = `rgb(${rv}, ${rv}, ${rv})`;
+      rCtx.fillRect(x + 1, y + 1, brickW - 2, brickH - 2);
     }
   }
 
   // Aged lime plaster coat over most of the wall
-  const plasterCanvas = document.createElement('canvas');
-  plasterCanvas.width = size;
-  plasterCanvas.height = size;
-  const pCtx = plasterCanvas.getContext('2d')!;
-
+  const [plasterCanvas, pCtx] = makeCanvas(size, size);
   const grad = pCtx.createLinearGradient(0, 0, 0, size);
-  grad.addColorStop(0, '#5a5a52');
-  grad.addColorStop(0.5, '#726c5e');
-  grad.addColorStop(0.85, '#4b493f');
-  grad.addColorStop(1, '#2d312a');
+  grad.addColorStop(0, '#545750');
+  grad.addColorStop(0.48, '#6e685b');
+  grad.addColorStop(0.84, '#47453c');
+  grad.addColorStop(1, '#262d27');
   pCtx.fillStyle = grad;
   pCtx.fillRect(0, 0, size, size);
 
-  // Grime, damp patches, and lime mottling
-  for (let i = 0; i < 420; i++) {
+  // Grime, mineral efflorescence, and lime mottling
+  for (let i = 0; i < 280; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const r = 8 + rand() * 44;
-    const dark = rand() > 0.45;
+    const r = 3 + rand() * 20;
+    const dark = rand() > 0.44;
     pCtx.fillStyle = dark
-      ? `rgba(22, 27, 24, ${0.06 + rand() * 0.14})`
-      : `rgba(148, 138, 118, ${0.05 + rand() * 0.1})`;
+      ? `rgba(18, 25, 22, ${0.06 + rand() * 0.16})`
+      : `rgba(154, 143, 122, ${0.05 + rand() * 0.11})`;
     pCtx.beginPath();
     pCtx.arc(x, y, r, 0, Math.PI * 2);
     pCtx.fill();
@@ -118,14 +141,14 @@ function generatePeelingPlaster(anisotropy: number): [THREE.CanvasTexture, THREE
   pCtx.globalCompositeOperation = 'destination-out';
   const peelCenters: Array<[number, number, number]> = [];
   for (let i = 0; i < 9; i++) {
-    peelCenters.push([rand() * size, 90 + rand() * (size - 150), 26 + rand() * 58]);
+    peelCenters.push([rand() * size, 42 + rand() * (size - 72), 12 + rand() * 28]);
   }
   for (const [cx, cy, radius] of peelCenters) {
     pCtx.beginPath();
-    const steps = 18;
+    const steps = 16;
     for (let s = 0; s <= steps; s++) {
       const a = (s / steps) * Math.PI * 2;
-      const rr = radius * (0.55 + rand() * 0.65);
+      const rr = radius * (0.52 + rand() * 0.68);
       const px = cx + Math.cos(a) * rr;
       const py = cy + Math.sin(a) * rr * 0.82;
       if (s === 0) pCtx.moveTo(px, py);
@@ -137,94 +160,139 @@ function generatePeelingPlaster(anisotropy: number): [THREE.CanvasTexture, THREE
   }
   pCtx.globalCompositeOperation = 'source-over';
 
-  // Draw plaster onto color canvas and high bump onto bump canvas
   ctx.drawImage(plasterCanvas, 0, 0);
 
-  // Add subtle peeled-edge shadows around patches
+  // Plaster bump layer (raised plaster vs recessed brick)
   bCtx.save();
-  bCtx.globalAlpha = 0.85;
-  bCtx.fillStyle = '#cfcfcf';
+  bCtx.globalAlpha = 0.88;
+  bCtx.fillStyle = '#d4d4d4';
   bCtx.fillRect(0, 0, size, size);
   bCtx.globalCompositeOperation = 'destination-out';
   for (const [cx, cy, radius] of peelCenters) {
     bCtx.beginPath();
-    bCtx.arc(cx, cy, radius * 0.78, 0, Math.PI * 2);
+    bCtx.arc(cx, cy, radius * 0.8, 0, Math.PI * 2);
     bCtx.fill();
   }
   bCtx.restore();
 
-  // Cracks & vertical damp water streaks
-  ctx.strokeStyle = 'rgba(18, 22, 20, 0.55)';
-  bCtx.strokeStyle = 'rgba(20, 20, 20, 0.8)';
+  // Roughness layer: dry chalky plaster is matte (#dedede), damp streaks catch beam sheen (#686868)
+  rCtx.fillStyle = '#e0e0e0';
+  rCtx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 160; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rad = 6 + rand() * 24;
+    const dampPatch = rand() > 0.65;
+    rCtx.fillStyle = dampPatch
+      ? `rgba(92, 92, 92, ${0.22 + rand() * 0.35})`
+      : `rgba(240, 240, 240, ${0.18 + rand() * 0.25})`;
+    rCtx.beginPath();
+    rCtx.arc(x, y, rad, 0, Math.PI * 2);
+    rCtx.fill();
+  }
+
+  // Deep spiderweb cracks & vertical water-seepage streaks
   for (let i = 0; i < 24; i++) {
     let x = rand() * size;
     let y = rand() * size;
-    ctx.lineWidth = 0.8 + rand() * 1.4;
-    bCtx.lineWidth = ctx.lineWidth;
+    const lw = 0.7 + rand() * 1.1;
+    ctx.strokeStyle = 'rgba(15, 19, 18, 0.62)';
+    bCtx.strokeStyle = 'rgba(14, 14, 14, 0.86)';
+    rCtx.strokeStyle = 'rgba(110, 110, 110, 0.55)';
+    ctx.lineWidth = lw;
+    bCtx.lineWidth = lw * 1.2;
+    rCtx.lineWidth = lw * 2.2;
     ctx.beginPath();
     bCtx.beginPath();
+    rCtx.beginPath();
     ctx.moveTo(x, y);
     bCtx.moveTo(x, y);
-    for (let s = 0; s < 6; s++) {
-      x += (rand() - 0.5) * 32;
-      y += rand() * 28;
+    rCtx.moveTo(x, y);
+    for (let s = 0; s < 7; s++) {
+      x += (rand() - 0.5) * 16;
+      y += rand() * 15;
       ctx.lineTo(x, y);
       bCtx.lineTo(x, y);
+      rCtx.lineTo(x, y);
     }
     ctx.stroke();
     bCtx.stroke();
+    rCtx.stroke();
   }
 
-  // Lower damp moss / moisture stain gradient
-  const damp = ctx.createLinearGradient(0, size * 0.7, 0, size);
-  damp.addColorStop(0, 'rgba(12, 20, 16, 0)');
-  damp.addColorStop(1, 'rgba(10, 18, 14, 0.65)');
-  ctx.fillStyle = damp;
-  ctx.fillRect(0, size * 0.7, size, size * 0.3);
+  // Lower rising dampness & mossy moisture sheen (catches warm torchlight realistically)
+  const dampColor = ctx.createLinearGradient(0, size * 0.66, 0, size);
+  dampColor.addColorStop(0, 'rgba(10, 20, 16, 0)');
+  dampColor.addColorStop(1, 'rgba(8, 17, 14, 0.72)');
+  ctx.fillStyle = dampColor;
+  ctx.fillRect(0, size * 0.66, size, size * 0.34);
+
+  const dampRough = rCtx.createLinearGradient(0, size * 0.65, 0, size);
+  dampRough.addColorStop(0, 'rgba(80, 80, 80, 0)');
+  dampRough.addColorStop(1, 'rgba(72, 72, 72, 0.75)');
+  rCtx.fillStyle = dampRough;
+  rCtx.fillRect(0, size * 0.65, size, size * 0.35);
 
   return [
     finalizeTexture(cCanvas, true, anisotropy),
     finalizeTexture(bCanvas, false, anisotropy),
+    finalizeTexture(rCanvas, false, anisotropy),
   ];
 }
 
-function generateStoneTiles(anisotropy: number): [THREE.CanvasTexture, THREE.CanvasTexture] {
-  const size = 512;
+/**
+ * Mossy weathered courtyard sandstone slabs with wet puddle glints in roughnessMap.
+ */
+function generateStoneTiles(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
   const rand = mulberry32(4211);
   const [cCanvas, ctx] = makeCanvas(size, size);
   const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
 
-  // Dark mossy grout
-  ctx.fillStyle = '#141a18';
+  // Dark wet mossy grout
+  ctx.fillStyle = '#111917';
   ctx.fillRect(0, 0, size, size);
-  bCtx.fillStyle = '#181818';
+  bCtx.fillStyle = '#141414';
   bCtx.fillRect(0, 0, size, size);
+  // Grout holds damp sheen
+  rCtx.fillStyle = '#626262';
+  rCtx.fillRect(0, 0, size, size);
 
   const grid = 4;
   const cell = size / grid;
   for (let gy = 0; gy < grid; gy++) {
     for (let gx = 0; gx < grid; gx++) {
       const jitterX = (gy % 2) * (cell * 0.25);
-      const x = ((gx * cell + jitterX) % size);
+      const x = (gx * cell + jitterX) % size;
       const y = gy * cell;
-      const base = 46 + Math.floor(rand() * 24);
-      const r = base - 4 + Math.floor(rand() * 10);
-      const g = base + 2 + Math.floor(rand() * 8);
-      const b = base + 4 + Math.floor(rand() * 10);
+      const base = 44 + Math.floor(rand() * 24);
+      const r = base - 5 + Math.floor(rand() * 10);
+      const g = base + 2 + Math.floor(rand() * 9);
+      const b = base + 5 + Math.floor(rand() * 10);
+      const tileRough = 165 + Math.floor(rand() * 62);
+      const tileBump = 152 + Math.floor(rand() * 52);
 
       const drawTile = (ox: number) => {
         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-        ctx.fillRect(ox + 3, y + 3, cell - 6, cell - 6);
-        bCtx.fillStyle = `rgb(${155 + Math.floor(rand() * 45)}, ${155 + Math.floor(rand() * 45)}, ${155 + Math.floor(rand() * 45)})`;
-        bCtx.fillRect(ox + 3, y + 3, cell - 6, cell - 6);
+        ctx.fillRect(ox + 1.5, y + 1.5, cell - 3, cell - 3);
+        bCtx.fillStyle = `rgb(${tileBump}, ${tileBump}, ${tileBump})`;
+        bCtx.fillRect(ox + 1.5, y + 1.5, cell - 3, cell - 3);
+        rCtx.fillStyle = `rgb(${tileRough}, ${tileRough}, ${tileRough})`;
+        rCtx.fillRect(ox + 1.5, y + 1.5, cell - 3, cell - 3);
 
-        // Stone grain speckles
-        for (let i = 0; i < 65; i++) {
-          const sx = ox + 4 + rand() * (cell - 8);
-          const sy = y + 4 + rand() * (cell - 8);
-          const sr = 1 + rand() * 5;
-          ctx.fillStyle = rand() > 0.5 ? 'rgba(15, 22, 20, 0.24)' : 'rgba(130, 145, 140, 0.12)';
+        // Chipped edges & mineral grit speckles
+        for (let i = 0; i < 46; i++) {
+          const sx = ox + 2 + rand() * (cell - 4);
+          const sy = y + 2 + rand() * (cell - 4);
+          const sr = 1 + rand() * 2.6;
+          const dark = rand() > 0.48;
+          ctx.fillStyle = dark ? 'rgba(12, 20, 18, 0.28)' : 'rgba(135, 152, 148, 0.14)';
           ctx.fillRect(sx, sy, sr, sr);
+          bCtx.fillStyle = dark ? 'rgba(60, 60, 60, 0.35)' : 'rgba(235, 235, 235, 0.28)';
+          bCtx.fillRect(sx, sy, sr, sr);
         }
       };
 
@@ -233,71 +301,343 @@ function generateStoneTiles(anisotropy: number): [THREE.CanvasTexture, THREE.Can
     }
   }
 
-  // Damp moss creeping in cracks & wet puddles
-  for (let i = 0; i < 70; i++) {
+  // Creeping moss blotches & wet rainwater puddles (very smooth dark roughness so flashlight glints!)
+  for (let i = 0; i < 48; i++) {
     const mx = rand() * size;
     const my = rand() * size;
-    const mr = 6 + rand() * 22;
-    ctx.fillStyle = `rgba(34, 52, 32, ${0.14 + rand() * 0.22})`;
-    ctx.beginPath();
-    ctx.arc(mx, my, mr, 0, Math.PI * 2);
-    ctx.fill();
+    const mr = 4 + rand() * 14;
+    const isPuddle = i % 3 === 0;
+    if (isPuddle) {
+      ctx.fillStyle = `rgba(14, 24, 26, ${0.22 + rand() * 0.2})`;
+      ctx.beginPath();
+      ctx.arc(mx, my, mr * 1.25, 0, Math.PI * 2);
+      ctx.fill();
+
+      rCtx.fillStyle = `rgba(54, 54, 54, ${0.55 + rand() * 0.3})`;
+      rCtx.beginPath();
+      rCtx.arc(mx, my, mr * 1.25, 0, Math.PI * 2);
+      rCtx.fill();
+    } else {
+      ctx.fillStyle = `rgba(30, 50, 28, ${0.18 + rand() * 0.24})`;
+      ctx.beginPath();
+      ctx.arc(mx, my, mr, 0, Math.PI * 2);
+      ctx.fill();
+
+      rCtx.fillStyle = `rgba(225, 225, 225, ${0.35 + rand() * 0.25})`;
+      rCtx.beginPath();
+      rCtx.arc(mx, my, mr, 0, Math.PI * 2);
+      rCtx.fill();
+    }
   }
 
   return [
     finalizeTexture(cCanvas, true, anisotropy),
     finalizeTexture(bCanvas, false, anisotropy),
+    finalizeTexture(rCanvas, false, anisotropy),
   ];
 }
 
-function generateWeatheredWood(anisotropy: number): [THREE.CanvasTexture, THREE.CanvasTexture] {
-  const size = 512;
+/**
+ * Dark carved North Indian teak wood with fine grain, plank grooves, and varnished/worn roughness variation.
+ */
+function generateWeatheredWood(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
   const rand = mulberry32(9001);
   const [cCanvas, ctx] = makeCanvas(size, size);
   const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
 
-  ctx.fillStyle = '#2a1c14';
+  ctx.fillStyle = '#281911';
   ctx.fillRect(0, 0, size, size);
   bCtx.fillStyle = '#808080';
   bCtx.fillRect(0, 0, size, size);
+  rCtx.fillStyle = '#bcbcbc';
+  rCtx.fillRect(0, 0, size, size);
 
-  // Plank seams
   const planks = 6;
   const pw = size / planks;
   for (let p = 0; p < planks; p++) {
     const px = p * pw;
-    const shade = Math.floor(rand() * 14);
-    ctx.fillStyle = `rgb(${38 + shade}, ${25 + Math.floor(shade * 0.7)}, ${17 + Math.floor(shade * 0.5)})`;
-    ctx.fillRect(px + 1, 0, pw - 2, size);
+    const shade = Math.floor(rand() * 16);
+    ctx.fillStyle = `rgb(${37 + shade}, ${23 + Math.floor(shade * 0.7)}, ${15 + Math.floor(shade * 0.5)})`;
+    ctx.fillRect(px + 0.5, 0, pw - 1, size);
 
-    // Fine vertical wood grain fibers
-    for (let i = 0; i < 90; i++) {
-      const gx = px + 2 + rand() * (pw - 4);
-      const dark = rand() > 0.38;
-      ctx.fillStyle = dark ? 'rgba(14, 8, 5, 0.35)' : 'rgba(92, 64, 42, 0.22)';
-      ctx.fillRect(gx, 0, 1 + rand() * 2, size);
-      bCtx.fillStyle = dark ? 'rgba(40, 40, 40, 0.4)' : 'rgba(210, 210, 210, 0.35)';
-      bCtx.fillRect(gx, 0, 1 + rand() * 1.5, size);
+    const plankR = 140 + Math.floor(rand() * 52);
+    rCtx.fillStyle = `rgb(${plankR}, ${plankR}, ${plankR})`;
+    rCtx.fillRect(px + 0.5, 0, pw - 1, size);
+
+    // Fine vertical wood grain fibers + subtle satin polish streaks
+    for (let i = 0; i < 62; i++) {
+      const gx = px + 1 + rand() * (pw - 2);
+      const dark = rand() > 0.36;
+      ctx.fillStyle = dark ? 'rgba(12, 7, 4, 0.38)' : 'rgba(98, 66, 42, 0.24)';
+      ctx.fillRect(gx, 0, 1 + rand() * 1.2, size);
+      bCtx.fillStyle = dark ? 'rgba(34, 34, 34, 0.48)' : 'rgba(218, 218, 218, 0.38)';
+      bCtx.fillRect(gx, 0, 1 + rand() * 1, size);
+      rCtx.fillStyle = dark ? 'rgba(220, 220, 220, 0.35)' : 'rgba(108, 108, 108, 0.28)';
+      rCtx.fillRect(gx, 0, 1 + rand() * 1.3, size);
+    }
+
+    // Subtle carved wood knot
+    if (rand() > 0.35) {
+      const kx = px + pw * (0.28 + rand() * 0.44);
+      const ky = 28 + rand() * (size - 56);
+      ctx.strokeStyle = 'rgba(16, 9, 5, 0.45)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.ellipse(kx, ky, 4 + rand() * 3, 10 + rand() * 6, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      bCtx.fillStyle = '#383838';
+      bCtx.beginPath();
+      bCtx.ellipse(kx, ky, 3.5, 8, 0, 0, Math.PI * 2);
+      bCtx.fill();
     }
 
     // Dark plank divider groove
-    ctx.fillStyle = '#120b08';
-    ctx.fillRect(px, 0, 2, size);
-    bCtx.fillStyle = '#151515';
-    bCtx.fillRect(px, 0, 3, size);
+    ctx.fillStyle = '#100906';
+    ctx.fillRect(px, 0, 1.8, size);
+    bCtx.fillStyle = '#121212';
+    bCtx.fillRect(px, 0, 2.2, size);
+    rCtx.fillStyle = '#f0f0f0';
+    rCtx.fillRect(px, 0, 2, size);
   }
 
   // Aged dust & water stain blotches
-  for (let i = 0; i < 60; i++) {
-    ctx.fillStyle = `rgba(18, 22, 20, ${0.08 + rand() * 0.14})`;
+  for (let i = 0; i < 44; i++) {
+    const sx = rand() * size;
+    const sy = rand() * size;
+    const sr = 5 + rand() * 18;
+    ctx.fillStyle = `rgba(16, 20, 18, ${0.09 + rand() * 0.15})`;
     ctx.beginPath();
-    ctx.arc(rand() * size, rand() * size, 12 + rand() * 34, 0, Math.PI * 2);
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
     ctx.fill();
+    rCtx.fillStyle = `rgba(232, 232, 232, ${0.15 + rand() * 0.22})`;
+    rCtx.beginPath();
+    rCtx.arc(sx, sy, sr, 0, Math.PI * 2);
+    rCtx.fill();
   }
 
   return [
     finalizeTexture(cCanvas, true, anisotropy),
     finalizeTexture(bCanvas, false, anisotropy),
+    finalizeTexture(rCanvas, false, anisotropy),
+  ];
+}
+
+/**
+ * Weathered hammered Indian temple brass with tarnished hollows, verdigris hints,
+ * and gleaming worn ridges in roughnessMap.
+ */
+function generateWeatheredBrass(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
+  const rand = mulberry32(5521);
+  const [cCanvas, ctx] = makeCanvas(size, size);
+  const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
+
+  ctx.fillStyle = '#9a7432';
+  ctx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = '#888888';
+  bCtx.fillRect(0, 0, size, size);
+  rCtx.fillStyle = '#6c6c6c';
+  rCtx.fillRect(0, 0, size, size);
+
+  // Subtle hammered dimples & burnished warm highlights
+  for (let i = 0; i < 220; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rad = 4 + rand() * 11;
+    const bright = rand() > 0.45;
+    ctx.fillStyle = bright
+      ? `rgba(218, 178, 86, ${0.09 + rand() * 0.15})`
+      : `rgba(54, 38, 16, ${0.12 + rand() * 0.18})`;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+
+    bCtx.fillStyle = bright ? 'rgba(182, 182, 182, 0.25)' : 'rgba(65, 65, 65, 0.28)';
+    bCtx.beginPath();
+    bCtx.arc(x, y, rad * 0.85, 0, Math.PI * 2);
+    bCtx.fill();
+
+    rCtx.fillStyle = bright ? 'rgba(62, 62, 62, 0.38)' : 'rgba(185, 185, 185, 0.34)';
+    rCtx.beginPath();
+    rCtx.arc(x, y, rad, 0, Math.PI * 2);
+    rCtx.fill();
+  }
+
+  // Oxidized patina & faint greenish verdigris speckles
+  for (let i = 0; i < 55; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const rad = 2 + rand() * 7;
+    ctx.fillStyle = `rgba(54, 78, 62, ${0.12 + rand() * 0.2})`;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+    rCtx.fillStyle = 'rgba(225, 225, 225, 0.55)';
+    rCtx.beginPath();
+    rCtx.arc(x, y, rad, 0, Math.PI * 2);
+    rCtx.fill();
+  }
+
+  // Fine lathe/polish scratches
+  for (let i = 0; i < 45; i++) {
+    const y = rand() * size;
+    ctx.strokeStyle = 'rgba(230, 198, 118, 0.14)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(size, y + (rand() - 0.5) * 4);
+    ctx.stroke();
+  }
+
+  return [
+    finalizeTexture(cCanvas, true, anisotropy),
+    finalizeTexture(bCanvas, false, anisotropy),
+    finalizeTexture(rCanvas, false, anisotropy),
+  ];
+}
+
+/**
+ * Pitted rusted wrought iron for Haveli main gate, door hinges, and barred windows.
+ */
+function generateRustedIron(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
+  const rand = mulberry32(8192);
+  const [cCanvas, ctx] = makeCanvas(size, size);
+  const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
+
+  ctx.fillStyle = '#252628';
+  ctx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = '#909090';
+  bCtx.fillRect(0, 0, size, size);
+  // Bare dark forged iron is semi-metallic (~115); rust pockets become gritty matte (~238)
+  rCtx.fillStyle = '#7c7c7c';
+  rCtx.fillRect(0, 0, size, size);
+
+  // Forged pitting & scaling
+  for (let i = 0; i < 240; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const w = 3 + rand() * 14;
+    const h = 3 + rand() * 14;
+    const isRust = rand() > 0.42;
+    if (isRust) {
+      const rTone = 86 + Math.floor(rand() * 52);
+      ctx.fillStyle = `rgba(${rTone}, ${Math.floor(rTone * 0.44)}, ${Math.floor(rTone * 0.22)}, ${0.32 + rand() * 0.48})`;
+      ctx.beginPath();
+      ctx.arc(x, y, w * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      bCtx.fillStyle = `rgba(${30 + Math.floor(rand() * 45)}, ${30 + Math.floor(rand() * 45)}, ${30 + Math.floor(rand() * 45)}, 0.55)`;
+      bCtx.beginPath();
+      bCtx.arc(x, y, w * 0.5, 0, Math.PI * 2);
+      bCtx.fill();
+
+      rCtx.fillStyle = 'rgba(238, 238, 238, 0.72)';
+      rCtx.beginPath();
+      rCtx.arc(x, y, w * 0.55, 0, Math.PI * 2);
+      rCtx.fill();
+    } else {
+      ctx.fillStyle = `rgba(68, 72, 76, ${0.15 + rand() * 0.22})`;
+      ctx.fillRect(x, y, w, h * 0.5);
+      rCtx.fillStyle = 'rgba(84, 84, 84, 0.45)';
+      rCtx.fillRect(x, y, w, h * 0.5);
+    }
+  }
+
+  return [
+    finalizeTexture(cCanvas, true, anisotropy),
+    finalizeTexture(bCanvas, false, anisotropy),
+    finalizeTexture(rCanvas, false, anisotropy),
+  ];
+}
+
+/**
+ * Classic 1980s Indian vintage metal Eveready-style corrugated & knurled flashlight grip.
+ */
+function generateTorchGrip(
+  anisotropy: number
+): [THREE.CanvasTexture, THREE.CanvasTexture, THREE.CanvasTexture] {
+  const size = 256;
+  const rand = mulberry32(19842);
+  const [cCanvas, ctx] = makeCanvas(size, size);
+  const [bCanvas, bCtx] = makeCanvas(size, size);
+  const [rCanvas, rCtx] = makeCanvas(size, size);
+
+  // Dark gunmetal-bronze enamel finish
+  ctx.fillStyle = '#24272a';
+  ctx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = '#707070';
+  bCtx.fillRect(0, 0, size, size);
+  rCtx.fillStyle = '#929292';
+  rCtx.fillRect(0, 0, size, size);
+
+  // Longitudinal machined ribs + diamond knurling
+  const ribs = 24;
+  const rw = size / ribs;
+  for (let i = 0; i < ribs; i++) {
+    const x = i * rw;
+    const g = ctx.createLinearGradient(x, 0, x + rw, 0);
+    g.addColorStop(0, '#141618');
+    g.addColorStop(0.45, '#3b4046');
+    g.addColorStop(0.65, '#4b5056');
+    g.addColorStop(1, '#121416');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, 0, rw, size);
+
+    const bg = bCtx.createLinearGradient(x, 0, x + rw, 0);
+    bg.addColorStop(0, '#1c1c1c');
+    bg.addColorStop(0.5, '#e8e8e8');
+    bg.addColorStop(1, '#1c1c1c');
+    bCtx.fillStyle = bg;
+    bCtx.fillRect(x, 0, rw, size);
+
+    // Ridge tops are polished from years of gripping; valleys hold dark grime
+    rCtx.fillStyle = '#c8c8c8';
+    rCtx.fillRect(x, 0, rw, size);
+    rCtx.fillStyle = '#525252';
+    rCtx.fillRect(x + rw * 0.28, 0, rw * 0.44, size);
+  }
+
+  // Horizontal grip band grooves
+  for (let y = 0; y < size; y += 16) {
+    ctx.fillStyle = 'rgba(10, 10, 12, 0.42)';
+    ctx.fillRect(0, y, size, 3);
+    bCtx.fillStyle = 'rgba(20, 20, 20, 0.6)';
+    bCtx.fillRect(0, y, size, 3);
+  }
+
+  // Subtle brass-silver wear scratches along barrel
+  for (let i = 0; i < 60; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const len = 8 + rand() * 26;
+    ctx.strokeStyle = 'rgba(165, 152, 128, 0.22)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (rand() - 0.5) * 6, y + len);
+    ctx.stroke();
+    rCtx.strokeStyle = 'rgba(42, 42, 42, 0.65)';
+    rCtx.beginPath();
+    rCtx.moveTo(x, y);
+    rCtx.lineTo(x + (rand() - 0.5) * 6, y + len);
+    rCtx.stroke();
+  }
+
+  return [
+    finalizeTexture(cCanvas, true, anisotropy),
+    finalizeTexture(bCanvas, false, anisotropy),
+    finalizeTexture(rCanvas, false, anisotropy),
   ];
 }
 
@@ -311,12 +651,10 @@ function generateCarvedJali(anisotropy: number): [THREE.CanvasTexture, THREE.Can
   aCtx.fillStyle = '#ffffff';
   aCtx.fillRect(0, 0, size, size);
 
-  // Outer carved frame
   ctx.strokeStyle = '#686053';
   ctx.lineWidth = 14;
   ctx.strokeRect(7, 7, size - 14, size - 14);
 
-  // Lattice cutouts (diamond + Mughal arch grid)
   aCtx.fillStyle = '#000000';
   const cols = 4;
   const rows = 3;
@@ -353,45 +691,42 @@ function generateCarvedJali(anisotropy: number): [THREE.CanvasTexture, THREE.Can
 }
 
 function generateFadedTapestry(anisotropy: number): THREE.CanvasTexture {
-  const size = 512;
+  const size = 256;
   const rand = mulberry32(7711);
   const [canvas, ctx] = makeCanvas(size, size);
 
   ctx.fillStyle = '#3e2324';
   ctx.fillRect(0, 0, size, size);
 
-  // Ornamental worn gold border
   ctx.strokeStyle = '#8b6d3b';
-  ctx.lineWidth = 16;
-  ctx.strokeRect(18, 18, size - 36, size - 36);
+  ctx.lineWidth = 8;
+  ctx.strokeRect(9, 9, size - 18, size - 18);
   ctx.strokeStyle = '#5c3f22';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(36, 36, size - 72, size - 72);
+  ctx.lineWidth = 2;
+  ctx.strokeRect(18, 18, size - 36, size - 36);
 
-  // Faded central mandala lotus motif
   ctx.save();
   ctx.translate(size / 2, size / 2);
   for (let ring = 0; ring < 3; ring++) {
     const petals = 12 + ring * 4;
-    const rad = 52 + ring * 48;
+    const rad = 26 + ring * 24;
     for (let i = 0; i < petals; i++) {
       const a = (i / petals) * Math.PI * 2;
       ctx.save();
       ctx.rotate(a);
       ctx.fillStyle = ring % 2 === 0 ? 'rgba(155, 114, 58, 0.35)' : 'rgba(128, 42, 42, 0.45)';
       ctx.beginPath();
-      ctx.ellipse(rad, 0, 22, 9, 0, 0, Math.PI * 2);
+      ctx.ellipse(rad, 0, 11, 4.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
   }
   ctx.restore();
 
-  // Age stains & damp wear
-  for (let i = 0; i < 180; i++) {
+  for (let i = 0; i < 110; i++) {
     ctx.fillStyle = `rgba(18, 14, 14, ${0.12 + rand() * 0.2})`;
     ctx.beginPath();
-    ctx.arc(rand() * size, rand() * size, 8 + rand() * 28, 0, Math.PI * 2);
+    ctx.arc(rand() * size, rand() * size, 4 + rand() * 14, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -404,12 +739,11 @@ function generateRustedGrill(anisotropy: number): [THREE.CanvasTexture, THREE.Ca
   const [cCanvas, ctx] = makeCanvas(size, size);
   const [aCanvas, aCtx] = makeCanvas(size, size);
 
-  ctx.fillStyle = '#2a2220';
+  ctx.fillStyle = '#28201e';
   ctx.fillRect(0, 0, size, size);
   aCtx.fillStyle = '#000000';
   aCtx.fillRect(0, 0, size, size);
 
-  // Outer frame + vertical/horizontal rusted iron bars
   aCtx.fillStyle = '#ffffff';
   aCtx.fillRect(0, 0, size, 16);
   aCtx.fillRect(0, size - 16, size, 16);
@@ -422,9 +756,8 @@ function generateRustedGrill(anisotropy: number): [THREE.CanvasTexture, THREE.Ca
   }
   aCtx.fillRect(0, size * 0.5 - 6, size, 12);
 
-  // Rust speckles on color map
-  for (let i = 0; i < 250; i++) {
-    ctx.fillStyle = rand() > 0.4 ? 'rgba(92, 42, 22, 0.55)' : 'rgba(26, 26, 28, 0.6)';
+  for (let i = 0; i < 220; i++) {
+    ctx.fillStyle = rand() > 0.4 ? 'rgba(98, 45, 22, 0.58)' : 'rgba(24, 24, 28, 0.62)';
     ctx.fillRect(rand() * size, rand() * size, 4 + rand() * 14, 4 + rand() * 14);
   }
 
@@ -435,52 +768,57 @@ function generateRustedGrill(anisotropy: number): [THREE.CanvasTexture, THREE.Ca
 }
 
 function generateMaroonSaree(anisotropy: number): [THREE.CanvasTexture, THREE.CanvasTexture] {
-  const size = 512;
+  const size = 256;
   const rand = mulberry32(19840);
   const [cCanvas, ctx] = makeCanvas(size, size);
   const [bCanvas, bCtx] = makeCanvas(size, size);
 
-  // Deep blood-maroon woven fabric matching reference images
-  ctx.fillStyle = '#3d1016';
+  ctx.fillStyle = '#3b0e14';
   ctx.fillRect(0, 0, size, size);
   bCtx.fillStyle = '#808080';
   bCtx.fillRect(0, 0, size, size);
 
-  // Vertical fabric folds & cloth weave
+  // Fine woven silk-cotton threads & draped vertical pleats
   for (let x = 0; x < size; x += 2) {
-    const fold = Math.sin((x / size) * Math.PI * 18) * 18;
-    const tone = Math.max(0, Math.min(255, Math.floor(128 + fold * 3)));
+    const fold = Math.sin((x / size) * Math.PI * 20) * 18 + Math.sin((x / size) * Math.PI * 6) * 8;
+    const tone = Math.max(0, Math.min(255, Math.floor(128 + fold * 2.8)));
     bCtx.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
     bCtx.fillRect(x, 0, 2, size);
 
-    ctx.fillStyle = fold > 0 ? `rgba(115, 28, 38, ${fold / 90})` : `rgba(16, 4, 6, ${-fold / 55})`;
+    ctx.fillStyle = fold > 0 ? `rgba(122, 28, 38, ${Math.min(0.45, fold / 75)})` : `rgba(14, 3, 5, ${Math.min(0.65, -fold / 48)})`;
     ctx.fillRect(x, 0, 2, size);
   }
 
-  // Tarnished gold zari border along bottom hem
-  const borderY = size - 88;
-  ctx.fillStyle = '#7c622e';
-  ctx.fillRect(0, borderY, size, 52);
-  ctx.fillStyle = '#47151b';
-  ctx.fillRect(0, borderY + 8, size, 36);
-  ctx.fillStyle = '#9a7b3a';
-  for (let x = 0; x < size; x += 18) {
+  // Tarnished antique gold zari border near hem
+  const borderY = size - 46;
+  ctx.fillStyle = '#7d622d';
+  ctx.fillRect(0, borderY, size, 28);
+  ctx.fillStyle = '#441218';
+  ctx.fillRect(0, borderY + 4, size, 20);
+  ctx.fillStyle = '#a4833e';
+  for (let x = 0; x < size; x += 12) {
     ctx.beginPath();
-    ctx.moveTo(x + 9, borderY + 12);
-    ctx.lineTo(x + 16, borderY + 26);
-    ctx.lineTo(x + 9, borderY + 40);
-    ctx.lineTo(x + 2, borderY + 26);
+    ctx.moveTo(x + 6, borderY + 6);
+    ctx.lineTo(x + 10.5, borderY + 14);
+    ctx.lineTo(x + 6, borderY + 22);
+    ctx.lineTo(x + 1.5, borderY + 14);
     ctx.closePath();
     ctx.fill();
   }
-  ctx.fillStyle = '#a28341';
-  ctx.fillRect(0, borderY + 54, size, 6);
+  ctx.fillStyle = '#a88944';
+  ctx.fillRect(0, borderY + 29, size, 3);
 
-  // Grime, mud, and tattered discoloration near hem
-  for (let i = 0; i < 160; i++) {
-    ctx.fillStyle = `rgba(14, 10, 10, ${0.15 + rand() * 0.28})`;
+  // Soot, ash & tattered moisture stains creeping up from hem
+  const hemGrime = ctx.createLinearGradient(0, size * 0.72, 0, size);
+  hemGrime.addColorStop(0, 'rgba(10, 7, 7, 0)');
+  hemGrime.addColorStop(1, 'rgba(9, 6, 7, 0.74)');
+  ctx.fillStyle = hemGrime;
+  ctx.fillRect(0, size * 0.72, size, size * 0.28);
+
+  for (let i = 0; i < 105; i++) {
+    ctx.fillStyle = `rgba(12, 8, 9, ${0.14 + rand() * 0.28})`;
     ctx.beginPath();
-    ctx.arc(rand() * size, rand() * size, 8 + rand() * 30, 0, Math.PI * 2);
+    ctx.arc(rand() * size, rand() * size, 4 + rand() * 16, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -492,51 +830,68 @@ function generateMaroonSaree(anisotropy: number): [THREE.CanvasTexture, THREE.Ca
 
 function generateGhostFace(anisotropy: number): THREE.CanvasTexture {
   const size = 256;
+  const rand = mulberry32(19849);
   const [canvas, ctx] = makeCanvas(size, size);
 
-  // Pale ash-grey gaunt corpse-like complexion
-  const rad = ctx.createRadialGradient(128, 122, 18, 128, 128, 130);
-  rad.addColorStop(0, '#a7afb0');
-  rad.addColorStop(0.55, '#7e888a');
-  rad.addColorStop(1, '#363f42');
+  // Eerie pale corpse-ash complexion shadowed around temples and jawline
+  const rad = ctx.createRadialGradient(128, 120, 14, 128, 128, 132);
+  rad.addColorStop(0, '#9fa8aa');
+  rad.addColorStop(0.52, '#737f82');
+  rad.addColorStop(0.85, '#3b4549');
+  rad.addColorStop(1, '#1b2226');
   ctx.fillStyle = rad;
   ctx.fillRect(0, 0, size, size);
 
-  // Cheekbone hollow shadows
-  ctx.fillStyle = 'rgba(18, 24, 28, 0.55)';
+  // Fine gaunt mottling & vein-like age shadows
+  for (let i = 0; i < 55; i++) {
+    ctx.fillStyle = `rgba(22, 30, 34, ${0.06 + rand() * 0.1})`;
+    ctx.beginPath();
+    ctx.arc(rand() * size, rand() * size, 4 + rand() * 16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Sunken cheekbone hollows
+  ctx.fillStyle = 'rgba(12, 18, 22, 0.62)';
   ctx.beginPath();
-  ctx.ellipse(82, 152, 22, 34, 0.35, 0, Math.PI * 2);
-  ctx.ellipse(174, 152, 22, 34, -0.35, 0, Math.PI * 2);
+  ctx.ellipse(80, 152, 24, 36, 0.35, 0, Math.PI * 2);
+  ctx.ellipse(176, 152, 24, 36, -0.35, 0, Math.PI * 2);
   ctx.fill();
 
-  // Deep sunken dark eye sockets (matching Reference 1)
+  // Deep hollow eye sockets + smudged kajal tear tracks
   const drawSocket = (ex: number, ey: number) => {
-    const g = ctx.createRadialGradient(ex, ey, 3, ex, ey, 24);
-    g.addColorStop(0, '#040507');
-    g.addColorStop(0.55, '#0e1114');
-    g.addColorStop(1, 'rgba(20, 24, 28, 0)');
+    const g = ctx.createRadialGradient(ex, ey, 3, ex, ey, 26);
+    g.addColorStop(0, '#020305');
+    g.addColorStop(0.58, '#0b0e12');
+    g.addColorStop(1, 'rgba(18, 22, 26, 0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.ellipse(ex, ey, 24, 19, 0, 0, Math.PI * 2);
+    ctx.ellipse(ex, ey, 25, 20, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Eerie pale pinpoint pupil reflection inside dark hollow eye
-    ctx.fillStyle = 'rgba(220, 238, 240, 0.72)';
+    // Smudged dark kajal streak trailing down cheek
+    const tearGrad = ctx.createLinearGradient(ex, ey + 10, ex, ey + 48);
+    tearGrad.addColorStop(0, 'rgba(8, 10, 14, 0.62)');
+    tearGrad.addColorStop(1, 'rgba(8, 10, 14, 0)');
+    ctx.fillStyle = tearGrad;
+    ctx.fillRect(ex - 4, ey + 10, 8, 38);
+
+    // Cold pinpoint haunted reflection inside hollow socket
+    ctx.fillStyle = 'rgba(215, 240, 245, 0.82)';
     ctx.beginPath();
-    ctx.arc(ex, ey, 2.6, 0, Math.PI * 2);
+    ctx.arc(ex, ey, 2.5, 0, Math.PI * 2);
     ctx.fill();
   };
-  drawSocket(96, 108);
-  drawSocket(160, 108);
+  drawSocket(95, 108);
+  drawSocket(161, 108);
 
-  // Faint faded dark red bindi smudge on forehead
-  ctx.fillStyle = 'rgba(110, 16, 22, 0.65)';
+  // Smudged faded crimson bridal bindi
+  ctx.fillStyle = 'rgba(118, 16, 22, 0.72)';
   ctx.beginPath();
-  ctx.arc(128, 84, 4.5, 0, Math.PI * 2);
+  ctx.arc(128, 84, 4.8, 0, Math.PI * 2);
   ctx.fill();
 
-  // Nose bridge shadow & nostrils
-  ctx.strokeStyle = 'rgba(24, 28, 32, 0.65)';
+  // Sharp shadowed nose bridge
+  ctx.strokeStyle = 'rgba(18, 24, 28, 0.72)';
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(124, 112);
@@ -545,26 +900,26 @@ function generateGhostFace(anisotropy: number): THREE.CanvasTexture {
   ctx.lineTo(135, 140);
   ctx.stroke();
 
-  // Gaunt cracked dry lips
-  ctx.fillStyle = '#251a1d';
+  // Slightly parted gaunt cracked lips
+  ctx.fillStyle = '#1b1114';
   ctx.beginPath();
-  ctx.ellipse(128, 174, 22, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(128, 175, 23, 8.5, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#080608';
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#050406';
+  ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.moveTo(106, 174);
-  ctx.quadraticCurveTo(128, 170, 150, 174);
+  ctx.moveTo(105, 175);
+  ctx.quadraticCurveTo(128, 170, 151, 175);
   ctx.stroke();
 
-  // Subtle dark forehead hair wisps
-  ctx.strokeStyle = 'rgba(8, 8, 10, 0.78)';
+  // Tangled wet hair wisps across forehead
+  ctx.strokeStyle = 'rgba(6, 7, 9, 0.84)';
   ctx.lineWidth = 2;
-  for (let i = 0; i < 24; i++) {
-    const hx = 40 + i * 7.5;
+  for (let i = 0; i < 28; i++) {
+    const hx = 34 + i * 7;
     ctx.beginPath();
     ctx.moveTo(hx, 0);
-    ctx.quadraticCurveTo(hx + (i % 2 === 0 ? -8 : 8), 38, hx + (i % 3 === 0 ? 5 : -5), 68 + (i % 4) * 8);
+    ctx.quadraticCurveTo(hx + (i % 2 === 0 ? -9 : 9), 40, hx + (i % 3 === 0 ? 6 : -6), 70 + (i % 4) * 9);
     ctx.stroke();
   }
 
@@ -585,7 +940,6 @@ function generateParchment(anisotropy: number): THREE.CanvasTexture {
     ctx.fill();
   }
 
-  // Faint handwritten ink lines
   ctx.strokeStyle = 'rgba(42, 24, 18, 0.65)';
   ctx.lineWidth = 2;
   for (let row = 0; row < 8; row++) {
@@ -615,11 +969,38 @@ function generateContactShadow(): THREE.CanvasTexture {
   return tex;
 }
 
-export function createProceduralTextures(renderer: THREE.WebGLRenderer): ProceduralTexturePack {
-  const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-  const [plasterColor, plasterBump] = generatePeelingPlaster(aniso);
-  const [stoneColor, stoneBump] = generateStoneTiles(aniso);
-  const [woodColor, woodBump] = generateWeatheredWood(aniso);
+/**
+ * Soft glowing circular radial sprite for dust motes, fire embers, and golden pickup sparks.
+ */
+function generateSoftParticle(): THREE.CanvasTexture {
+  const size = 64;
+  const [canvas, ctx] = makeCanvas(size, size);
+  const g = ctx.createRadialGradient(32, 32, 1, 32, 32, 30);
+  g.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  g.addColorStop(0.32, 'rgba(255, 248, 232, 0.72)');
+  g.addColorStop(0.7, 'rgba(255, 236, 200, 0.18)');
+  g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+export function createProceduralTextures(
+  renderer: THREE.WebGLRenderer,
+  isMobile = false
+): ProceduralTexturePack {
+  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+  const aniso = isMobile ? Math.min(2, maxAniso) : Math.min(8, maxAniso);
+
+  const [plasterColor, plasterBump, plasterRoughness] = generatePeelingPlaster(aniso);
+  const [stoneColor, stoneBump, stoneRoughness] = generateStoneTiles(aniso);
+  const [woodColor, woodBump, woodRoughness] = generateWeatheredWood(aniso);
+  const [brassColor, brassBump, brassRoughness] = generateWeatheredBrass(aniso);
+  const [ironColor, ironBump, ironRoughness] = generateRustedIron(aniso);
+  const [torchGripColor, torchGripBump, torchGripRoughness] = generateTorchGrip(aniso);
   const [jaliColor, jaliAlpha] = generateCarvedJali(aniso);
   const tapestryColor = generateFadedTapestry(aniso);
   const [grillColor, grillAlpha] = generateRustedGrill(aniso);
@@ -627,14 +1008,27 @@ export function createProceduralTextures(renderer: THREE.WebGLRenderer): Procedu
   const ghostFaceColor = generateGhostFace(aniso);
   const parchmentColor = generateParchment(aniso);
   const contactShadow = generateContactShadow();
+  const softParticle = generateSoftParticle();
 
   const all = [
     plasterColor,
     plasterBump,
+    plasterRoughness,
     stoneColor,
     stoneBump,
+    stoneRoughness,
     woodColor,
     woodBump,
+    woodRoughness,
+    brassColor,
+    brassBump,
+    brassRoughness,
+    ironColor,
+    ironBump,
+    ironRoughness,
+    torchGripColor,
+    torchGripBump,
+    torchGripRoughness,
     jaliColor,
     jaliAlpha,
     tapestryColor,
@@ -645,15 +1039,28 @@ export function createProceduralTextures(renderer: THREE.WebGLRenderer): Procedu
     ghostFaceColor,
     parchmentColor,
     contactShadow,
+    softParticle,
   ];
 
   return {
     plasterColor,
     plasterBump,
+    plasterRoughness,
     stoneColor,
     stoneBump,
+    stoneRoughness,
     woodColor,
     woodBump,
+    woodRoughness,
+    brassColor,
+    brassBump,
+    brassRoughness,
+    ironColor,
+    ironBump,
+    ironRoughness,
+    torchGripColor,
+    torchGripBump,
+    torchGripRoughness,
     jaliColor,
     jaliAlpha,
     tapestryColor,
@@ -664,6 +1071,7 @@ export function createProceduralTextures(renderer: THREE.WebGLRenderer): Procedu
     ghostFaceColor,
     parchmentColor,
     contactShadow,
+    softParticle,
     dispose: () => {
       all.forEach((t) => t.dispose());
     },

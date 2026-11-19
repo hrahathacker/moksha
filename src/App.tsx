@@ -28,6 +28,18 @@ import {
 } from './game/types';
 
 const COMPLETED_STORAGE_KEY = 'moksha_completed_chapters_v1';
+const TOUCH_SENS_STORAGE_KEY = 'moksha_touch_sens_v1';
+
+function loadTouchSensitivity(): number {
+  try {
+    const raw = window.localStorage.getItem(TOUCH_SENS_STORAGE_KEY);
+    if (!raw) return 1.0;
+    const val = parseFloat(raw);
+    return Number.isFinite(val) ? Math.max(0.5, Math.min(2.0, val)) : 1.0;
+  } catch {
+    return 1.0;
+  }
+}
 
 const INITIAL_HUD: HudSnapshot = {
   phase: 'title',
@@ -73,6 +85,14 @@ const INITIAL_HUD: HudSnapshot = {
     objectives: [],
     almirahs: [],
   },
+  stance: 'standing',
+  isConcealed: false,
+  stealthReason: 'none',
+  attackCooldownRemaining: 0,
+  attackCooldownTotal: 6,
+  attackHitFlash: 0,
+  headroomBlocked: false,
+  activeCombatEnemy: null,
 };
 
 function loadCompletedChapters(): ChapterNumber[] {
@@ -106,12 +126,13 @@ export default function App() {
   );
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [mapExpanded, setMapExpanded] = useState(false);
-  const [settings, setSettings] = useState<GameSettings>({
+  const [settings, setSettings] = useState<GameSettings>(() => ({
     difficulty: 'normal',
     quality: 'high',
     volume: 0.78,
     muted: false,
-  });
+    touchSensitivity: typeof window !== 'undefined' ? loadTouchSensitivity() : 1.0,
+  }));
 
   // Pre-built Instant Victory Ghost Song ("Moksha Geet") playback state
   const [songPlaying, setSongPlaying] = useState(false);
@@ -330,6 +351,16 @@ export default function App() {
     });
   }, []);
 
+  const handleChangeTouchSensitivity = useCallback((s: number) => {
+    const clamped = Math.max(0.5, Math.min(2.0, Math.round(s * 10) / 10));
+    setSettings((prev) => ({ ...prev, touchSensitivity: clamped }));
+    try {
+      window.localStorage.setItem(TOUCH_SENS_STORAGE_KEY, String(clamped));
+    } catch {
+      // ignore storage restrictions
+    }
+  }, []);
+
   const handleStartGame = useCallback(() => {
     setShowGuideModal(false);
     setMapExpanded(false);
@@ -422,6 +453,10 @@ export default function App() {
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if ((hud.phase !== 'playing' && hud.phase !== 'climax') || mapExpanded) return;
     engineRef.current?.audio.unlock();
+    if (hud.pointerLocked && !isTouchDevice && e.button === 0) {
+      engineRef.current?.triggerPlayerAttack();
+      return;
+    }
     if (!hud.pointerLocked && !isTouchDevice) {
       engineRef.current?.requestPointerLock();
       draggingLookRef.current = true;
@@ -481,12 +516,17 @@ export default function App() {
           />
         )}
 
-      {/* Android Landscape Ergonomic Touch Controls */}
+      {/* Android Landscape PUBG/BGMI Action-Horror Multi-Touch Controls */}
       {isTouchDevice && (hud.phase === 'playing' || hud.phase === 'climax') && !mapExpanded && (
         <MobileControls
           flashlightOn={hud.flashlightOn}
           isHiding={hud.isHiding}
           hasPrompt={hud.nearPrompt !== null}
+          stance={hud.stance}
+          stamina={hud.stamina}
+          attackCooldownRemaining={hud.attackCooldownRemaining}
+          attackCooldownTotal={hud.attackCooldownTotal}
+          touchSensitivity={settings.touchSensitivity}
           onMoveVector={(x, y) => {
             if (engineRef.current) {
               engineRef.current.touchInput.moveX = x;
@@ -503,6 +543,10 @@ export default function App() {
           }}
           onInteract={() => engineRef.current?.triggerInteract()}
           onToggleFlashlight={() => engineRef.current?.toggleFlashlight()}
+          onJump={() => engineRef.current?.triggerJump()}
+          onToggleCrouch={() => engineRef.current?.toggleCrouch()}
+          onToggleProne={() => engineRef.current?.toggleProne()}
+          onAttack={() => engineRef.current?.triggerPlayerAttack()}
         />
       )}
 
@@ -575,6 +619,7 @@ export default function App() {
           onChangeVolume={handleChangeVolume}
           onToggleMute={handleToggleMute}
           onChangeQuality={handleChangeQuality}
+          onChangeTouchSensitivity={handleChangeTouchSensitivity}
           onToggleFullscreen={handleToggleFullscreen}
         />
       )}

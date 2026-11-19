@@ -59,7 +59,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   const activeChapter = CHAPTER_CONFIGS[selectedChapter];
 
   return (
-    <div className="fixed inset-0 z-20 flex flex-col justify-between overflow-y-auto pointer-events-auto">
+    <div className="fixed inset-0 z-20 flex flex-col justify-between overflow-y-auto touch-scroll-y pointer-events-auto">
       {/* Dark atmospheric gradient scrim leaving courtyard visibly haunting */}
       <div
         className="pointer-events-none fixed inset-0"

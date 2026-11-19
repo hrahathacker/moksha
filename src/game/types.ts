@@ -19,7 +19,35 @@ export type GraphicsQuality = 'high' | 'low';
 
 export type RitualItemId = 'kalash' | 'chunri' | 'diya' | 'samagri';
 
-export type GhostAIState = 'patrol' | 'investigate' | 'chase' | 'search' | 'shanti';
+export type GhostAIState = 'patrol' | 'investigate' | 'chase' | 'search' | 'staggered' | 'shanti';
+
+export type PlayerStance = 'standing' | 'crouching' | 'prone';
+
+export type StealthReason = 'none' | 'almirah' | 'furniture' | 'corner';
+
+export interface EnemyCombatEntity {
+  readonly id: string;
+  readonly name: string;
+  readonly hindiName?: string;
+  readonly position: { x: number; y: number; z: number };
+  hp: number;
+  maxHp: number;
+  readonly isBossOrMortal: boolean;
+  readonly isDefeated: boolean;
+  readonly isStaggered: boolean;
+  takeDamage: (amount: number, knockbackDir?: { x: number; z: number }) => boolean;
+  stagger: (durationSec: number, knockbackDir?: { x: number; z: number }) => void;
+  onDefeat: () => void;
+}
+
+export interface ActiveEnemyHudState {
+  id: string;
+  name: string;
+  hindiName?: string;
+  hp: number;
+  maxHp: number;
+  staggered: boolean;
+}
 
 export interface ChapterConfig {
   id: ChapterNumber;
@@ -282,6 +310,7 @@ export interface GameSettings {
   quality: GraphicsQuality;
   volume: number;
   muted: boolean;
+  touchSensitivity: number;
 }
 
 export interface DifficultyConfig {
@@ -337,6 +366,14 @@ export interface HudSnapshot {
   objectiveText: string;
   graceRemaining: number;
   mapData: MinimapData;
+  stance: PlayerStance;
+  isConcealed: boolean;
+  stealthReason: StealthReason;
+  attackCooldownRemaining: number;
+  attackCooldownTotal: number;
+  attackHitFlash: number;
+  headroomBlocked: boolean;
+  activeCombatEnemy: ActiveEnemyHudState | null;
 }
 
 export const RITUAL_ITEMS: Record<RitualItemId, RitualItemMeta> = {

@@ -812,6 +812,179 @@ export class HorrorAudioManager {
     heel.stop(now + 0.08);
   }
 
+  public playJumpTakeoff(): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const now = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(340, now);
+    bp.frequency.exponentialRampToValueAtTime(920, now + 0.14);
+    bp.Q.value = 1.6;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.16, now + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.masterGain);
+    src.start(now, Math.random() * 0.8, 0.18);
+  }
+
+  public playJumpLand(impactScale = 1): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const now = this.ctx.currentTime;
+    const scale = Math.max(0.5, Math.min(1.3, impactScale));
+
+    // Heavy boot-to-stone thud
+    const sub = this.ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(112, now);
+    sub.frequency.exponentialRampToValueAtTime(36, now + 0.12);
+    const sg = this.ctx.createGain();
+    sg.gain.setValueAtTime(0.28 * scale, now);
+    sg.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    sub.connect(sg);
+    sg.connect(this.masterGain);
+    sub.start(now);
+    sub.stop(now + 0.16);
+
+    // Grit scuff
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 720;
+    const ng = this.ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, now);
+    ng.gain.linearRampToValueAtTime(0.18 * scale, now + 0.015);
+    ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+    src.connect(lp);
+    lp.connect(ng);
+    ng.connect(this.masterGain);
+    src.start(now, Math.random() * 1.1, 0.16);
+  }
+
+  public playStanceShift(toProne: boolean): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const now = this.ctx.currentTime;
+    const dur = toProne ? 0.26 : 0.16;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(toProne ? 680 : 1080, now);
+    bp.frequency.exponentialRampToValueAtTime(toProne ? 320 : 620, now + dur);
+    bp.Q.value = 2.0;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(toProne ? 0.14 : 0.09, now + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.masterGain);
+    src.start(now, Math.random() * 0.9, dur + 0.03);
+  }
+
+  public playTorchBashSwing(): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const now = this.ctx.currentTime;
+
+    // Heavy air swoosh
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1180, now);
+    bp.frequency.exponentialRampToValueAtTime(290, now + 0.22);
+    bp.Q.value = 2.1;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.28, now + 0.045);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.masterGain);
+    src.start(now, Math.random() * 0.9, 0.26);
+
+    // Subtle brass barrel metallic ring
+    const ring = this.ctx.createOscillator();
+    ring.type = 'triangle';
+    ring.frequency.setValueAtTime(420, now);
+    ring.frequency.exponentialRampToValueAtTime(210, now + 0.14);
+    const rg = this.ctx.createGain();
+    rg.gain.setValueAtTime(0.08, now);
+    rg.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    ring.connect(rg);
+    rg.connect(this.masterGain);
+    ring.start(now);
+    ring.stop(now + 0.16);
+  }
+
+  public playHolyWardImpact(): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || this.muted) return;
+    const now = this.ctx.currentTime;
+
+    // Punchy physical bash thump
+    const thump = this.ctx.createOscillator();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(140, now);
+    thump.frequency.exponentialRampToValueAtTime(38, now + 0.22);
+    const tg = this.ctx.createGain();
+    tg.gain.setValueAtTime(0.42, now);
+    tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    thump.connect(tg);
+    tg.connect(this.masterGain);
+    thump.start(now);
+    thump.stop(now + 0.25);
+
+    // Golden sacred brass harmonic spark shimmer
+    [660, 990, 1320, 1980].forEach((freq, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      osc.type = idx < 2 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.012);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.04, now + 0.55);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now + idx * 0.012);
+      g.gain.linearRampToValueAtTime(0.14 / (idx * 0.45 + 1), now + idx * 0.012 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+      osc.connect(g);
+      g.connect(this.masterGain);
+      if (this.ghostReverb) g.connect(this.ghostReverb);
+      osc.start(now + idx * 0.012);
+      osc.stop(now + 0.7);
+    });
+  }
+
+  public playGhostStaggerShriek(): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || this.muted) return;
+    const now = this.ctx.currentTime;
+    [880, 932.3, 1480].forEach((startFreq, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      osc.type = idx === 2 ? 'sawtooth' : 'triangle';
+      osc.frequency.setValueAtTime(startFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(startFreq * 0.52, now + 0.72);
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1400, now);
+      bp.frequency.exponentialRampToValueAtTime(520, now + 0.7);
+      bp.Q.value = 3.2;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(idx === 2 ? 0.09 : 0.14, now + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.78);
+      osc.connect(bp);
+      bp.connect(g);
+      g.connect(this.masterGain);
+      if (this.ghostReverb) g.connect(this.ghostReverb);
+      osc.start(now);
+      osc.stop(now + 0.82);
+    });
+  }
+
   public playFlashlightClick(): void {
     if (!this.unlocked || !this.ctx || !this.masterGain || this.muted) return;
     const now = this.ctx.currentTime;

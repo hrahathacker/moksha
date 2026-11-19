@@ -28,8 +28,27 @@
     -webkit-user-select: none;
     user-select: none;
     overscroll-behavior: none;
-    touch-action: manipulation;
+    touch-action: none;
   }
+
+  canvas,
+  button {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  input[type='range'] {
+    touch-action: pan-x;
+  }
+}
+
+.touch-scroll-y {
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .font-display {

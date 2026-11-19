@@ -9,6 +9,7 @@ import {
   Music,
   Maximize,
   Minimize,
+  EyeOff,
 } from 'lucide-react';
 import {
   CHAPTER_CONFIGS,
@@ -58,6 +59,17 @@ export const GameHud: React.FC<GameHudProps> = ({
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none select-none overflow-hidden">
+      {/* 0. Subtle Always-On Atmospheric Cold-Teal Dark Vignette (zero backdrop-filter cost) */}
+      {hud.phase !== 'victory' && (
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(ellipse at center, transparent 54%, rgba(3, 9, 12, 0.34) 82%, rgba(2, 6, 8, 0.72) 100%)',
+          }}
+        />
+      )}
+
       {/* 1. Proximity Terror Crimson Vignette */}
       {vignetteAlpha > 0.04 && (
         <div
@@ -66,6 +78,18 @@ export const GameHud: React.FC<GameHudProps> = ({
             opacity: vignetteAlpha,
             background:
               'radial-gradient(circle at center, transparent 42%, rgba(138, 12, 20, 0.58) 82%, rgba(86, 4, 10, 0.92) 100%)',
+          }}
+        />
+      )}
+
+      {/* 1B. Golden Holy-Ward Strike Impact Flash */}
+      {hud.attackHitFlash > 0.04 && (
+        <div
+          className="absolute inset-0"
+          style={{
+            opacity: hud.attackHitFlash * 0.45,
+            background:
+              'radial-gradient(circle at center, rgba(255, 226, 148, 0.45) 0%, rgba(235, 168, 56, 0.14) 55%, transparent 100%)',
           }}
         />
       )}
@@ -296,15 +320,17 @@ export const GameHud: React.FC<GameHudProps> = ({
                     </span>
                   </div>
                   <div className="text-[8px] sm:text-[10px] tracking-[0.12em] uppercase text-[#889d9f] mt-0.5">
-                    {hud.isHiding
-                      ? hud.flashlightOn
+                    {hud.isConcealed
+                      ? 'HIDDEN'
+                      : hud.isHiding && hud.flashlightOn
                         ? 'TORCH OFF!'
-                        : 'HIDDEN'
-                      : isCritical
-                        ? 'SHE IS NEAR'
-                        : isDanger
-                          ? 'PULSE UP'
-                          : 'HEART'}
+                        : hud.ghostState === 'staggered'
+                          ? 'REPELLED'
+                          : isCritical
+                            ? 'SHE IS NEAR'
+                            : isDanger
+                              ? 'PULSE UP'
+                              : 'HEART'}
                   </div>
                 </div>
               </div>
@@ -342,33 +368,80 @@ export const GameHud: React.FC<GameHudProps> = ({
             </div>
           </div>
 
-          {/* TOP-CENTER: FINAL RITUAL COUNTDOWN */}
-          {hud.phase === 'climax' && (
-            <div
-              className={`absolute left-1/2 -translate-x-1/2 rounded-sm border border-[#e5a94c]/70 text-center ${
-                isTouchDevice ? 'px-3.5 py-1.5 min-w-[168px]' : 'px-5 py-2.5 min-w-[230px]'
-              }`}
-              style={{
-                top: 'max(8px, var(--sat))',
-                backgroundColor: 'rgba(24, 10, 6, 0.88)',
-              }}
-            >
-              <div className="text-[9px] sm:text-[11px] tracking-[0.2em] uppercase text-[#f3bd60] font-semibold">
-                Final Ritual · Survive
+          {/* TOP-CENTER: FINAL RITUAL COUNTDOWN, MODULAR ENEMY HEALTH BAR & STEALTH CONCEALMENT INDICATOR */}
+          <div
+            className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5"
+            style={{ top: 'max(8px, var(--sat))' }}
+          >
+            {hud.phase === 'climax' && (
+              <div
+                className={`rounded-sm border border-[#e5a94c]/70 text-center ${
+                  isTouchDevice ? 'px-3.5 py-1.5 min-w-[168px]' : 'px-5 py-2.5 min-w-[230px]'
+                }`}
+                style={{ backgroundColor: 'rgba(24, 10, 6, 0.88)' }}
+              >
+                <div className="text-[9px] sm:text-[11px] tracking-[0.2em] uppercase text-[#f3bd60] font-semibold">
+                  Final Ritual · Survive
+                </div>
+                <div className="font-mono-tabular text-xl sm:text-3xl font-bold text-[#fff1d0] leading-tight">
+                  {hud.climaxRemaining.toFixed(1)}s
+                </div>
+                <div className="mt-1 h-1.5 w-full bg-white/15 overflow-hidden">
+                  <div
+                    className="h-full bg-[#f0a236] transition-transform duration-75 origin-left"
+                    style={{
+                      transform: `scaleX(${Math.max(0, Math.min(1, hud.climaxRemaining / Math.max(1, climaxTotal)))})`,
+                    }}
+                  />
+                </div>
               </div>
-              <div className="font-mono-tabular text-xl sm:text-3xl font-bold text-[#fff1d0] leading-tight">
-                {hud.climaxRemaining.toFixed(1)}s
+            )}
+
+            {/* Modular Boss / Rakshasa Enemy Health Bar (auto-appears when fighting mortal enemies) */}
+            {hud.activeCombatEnemy && (
+              <div
+                className="px-3.5 py-2 rounded-sm border border-[#c84343]/65 min-w-[210px] sm:min-w-[290px]"
+                style={{ backgroundColor: 'rgba(14, 8, 9, 0.88)' }}
+              >
+                <div className="flex items-center justify-between gap-2 text-[10px] sm:text-xs">
+                  <span className="font-display font-semibold tracking-wider text-[#f7e7dc] uppercase">
+                    {hud.activeCombatEnemy.name}
+                  </span>
+                  <span className="font-mono-tabular text-[#e29595]">
+                    {hud.activeCombatEnemy.staggered
+                      ? 'STAGGERED'
+                      : `${hud.activeCombatEnemy.hp} / ${hud.activeCombatEnemy.maxHp}`}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full bg-white/12 overflow-hidden">
+                  <div
+                    className="h-full bg-[#d93f3f] transition-transform duration-100 origin-left"
+                    style={{
+                      transform: `scaleX(${Math.max(0, Math.min(1, hud.activeCombatEnemy.hp / Math.max(1, hud.activeCombatEnemy.maxHp)))})`,
+                    }}
+                  />
+                </div>
               </div>
-              <div className="mt-1 h-1.5 w-full bg-white/15 overflow-hidden">
-                <div
-                  className="h-full bg-[#f0a236] transition-transform duration-75 origin-left"
-                  style={{
-                    transform: `scaleX(${Math.max(0, Math.min(1, hud.climaxRemaining / Math.max(1, climaxTotal)))})`,
-                  }}
-                />
+            )}
+
+            {/* Subtle Top-Center Stealth Concealment Indicator (static clean EyeOff icon + HIDDEN) */}
+            {hud.isConcealed && (
+              <div
+                className="px-3 py-1 rounded-sm border border-[#72b5bf]/45 flex items-center gap-1.5 text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-[#cde8ec]"
+                style={{ backgroundColor: 'rgba(6, 14, 16, 0.84)' }}
+              >
+                <EyeOff className="w-3.5 h-3.5 text-[#7cc8d4] shrink-0" />
+                <span className="font-semibold">Hidden</span>
+                <span className="text-[#88adb3] text-[9px] sm:text-[10px]">
+                  {hud.stealthReason === 'furniture'
+                    ? '· Under Cover'
+                    : hud.stealthReason === 'corner'
+                      ? '· In Shadow'
+                      : '· Almirah'}
+                </span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* CENTER CROSSHAIR & INTERACTION PROMPT */}
           <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -380,6 +453,15 @@ export const GameHud: React.FC<GameHudProps> = ({
                   boxShadow: hud.nearPrompt ? '0 0 10px rgba(243,189,96,0.9)' : 'none',
                 }}
               />
+            )}
+
+            {hud.headroomBlocked && (
+              <div
+                className="mb-3 px-3 py-1 rounded-sm border border-[#e5a94c]/45 text-[11px] text-[#f3d499]"
+                style={{ backgroundColor: 'rgba(8, 14, 16, 0.86)' }}
+              >
+                Too low to stand — crawl out from under furniture first
+              </div>
             )}
 
             {hud.nearPrompt && (
@@ -448,6 +530,26 @@ export const GameHud: React.FC<GameHudProps> = ({
                     }}
                   />
                 </div>
+              </div>
+
+              {/* Desktop Stance & Torch Bash Readiness Strip */}
+              <div className="pt-1.5 border-t border-white/10 flex items-center justify-between text-[10px] tracking-wider uppercase text-[#9db0b2]">
+                <span>
+                  Stance:{' '}
+                  <strong className="text-[#f0c774]">
+                    {hud.stance === 'prone' ? 'Prone' : hud.stance === 'crouching' ? 'Crouch' : 'Stand'}
+                  </strong>
+                </span>
+                <span className="font-mono-tabular">
+                  {hud.attackCooldownRemaining > 0.05
+                    ? `Bash ${hud.attackCooldownRemaining.toFixed(1)}s`
+                    : hud.stamina >= 20
+                      ? 'LMB Bash Ready'
+                      : 'Low Stamina'}
+                </span>
+              </div>
+              <div className="text-[9px] text-[#7a9093] tracking-wide">
+                Space Jump · C Crouch · Z Prone · LMB Strike
               </div>
             </div>
           )}

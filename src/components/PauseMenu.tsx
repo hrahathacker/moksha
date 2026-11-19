@@ -21,6 +21,7 @@ interface PauseMenuProps {
   onChangeVolume: (v: number) => void;
   onToggleMute: () => void;
   onChangeQuality: (q: GraphicsQuality) => void;
+  onChangeTouchSensitivity: (s: number) => void;
   onToggleFullscreen?: () => void;
 }
 
@@ -34,15 +35,16 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   onChangeVolume,
   onToggleMute,
   onChangeQuality,
+  onChangeTouchSensitivity,
   onToggleFullscreen,
 }) => {
   return (
     <div
-      className="fixed inset-0 z-30 flex items-center justify-center safe-pad p-3 sm:p-5 overflow-y-auto pointer-events-auto"
+      className="fixed inset-0 z-30 flex items-center justify-center safe-pad p-3 sm:p-5 overflow-y-auto touch-scroll-y pointer-events-auto"
       style={{ backgroundColor: 'rgba(4, 9, 11, 0.88)' }}
     >
       <div
-        className="w-full max-w-xl max-h-[94dvh] overflow-y-auto rounded-sm border border-white/15 p-4 sm:p-6 space-y-4"
+        className="w-full max-w-xl max-h-[94dvh] overflow-y-auto touch-scroll-y rounded-sm border border-white/15 p-4 sm:p-6 space-y-4"
         style={{ backgroundColor: '#0a1215' }}
       >
         <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
@@ -107,7 +109,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
             </div>
           </div>
 
-          {/* Right: Audio & Graphics Settings */}
+          {/* Right: Audio, Touch Sensitivity & Graphics Settings */}
           <div className="space-y-3 sm:pl-3 sm:border-l sm:border-white/10">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs text-[#91a5a8]">
@@ -131,6 +133,24 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
                 value={settings.muted ? 0 : settings.volume}
                 onChange={(e) => onChangeVolume(parseFloat(e.target.value))}
                 className="w-full accent-[#e5a94c] cursor-pointer"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-[#91a5a8]">
+                <span>Touch Sensitivity</span>
+                <span className="font-mono-tabular text-[#d7e0e0]">
+                  {settings.touchSensitivity.toFixed(1)}×
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0.5}
+                max={2.0}
+                step={0.1}
+                value={settings.touchSensitivity}
+                onChange={(e) => onChangeTouchSensitivity(parseFloat(e.target.value))}
+                className="w-full accent-[#74c6d1] cursor-pointer"
               />
             </div>
 

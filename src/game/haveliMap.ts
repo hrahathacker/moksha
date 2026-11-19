@@ -2,21 +2,35 @@ import * as THREE from 'three';
 import {
   AlmirahRig,
   HavanKundRig,
+  HingedDoorRig,
   createAlmirah,
   createCarvedPillarWithBell,
   createHavanKund,
+  createHingedHaveliDoor,
   createMoonlightWindow,
   createRitualItemModel,
+  createRustedIronGate,
   createWoodenTable,
 } from './models';
 import { ProceduralTexturePack } from './textures';
-import { ChapterNumber, LORE_NOTES, LoreNoteData, RitualItemId } from './types';
+import { ChapterNumber, LORE_NOTES, LoreNoteData, PlayerStance, RitualItemId } from './types';
 
 export interface AABBCollider {
   minX: number;
   maxX: number;
   minZ: number;
   maxZ: number;
+  /** If set, player with (feetY + bodyHeight <= crawlUnderY) can crawl underneath (tables, charpai) */
+  crawlUnderY?: number;
+  /** If set, jumping player with (feetY >= maxY - 0.14) clears this low obstacle */
+  maxY?: number;
+  /** Grants stealth cover when crouching/proning adjacent or underneath */
+  isCover?: boolean;
+}
+
+export interface StealthCoverCheck {
+  underFurniture: boolean;
+  nearCover: boolean;
 }
 
 export interface RitualWorldItem {
@@ -86,6 +100,7 @@ export interface HaveliWorld {
   colliders: AABBCollider[];
   havanKund: HavanKundRig;
   almirahs: AlmirahRig[];
+  hingedDoors: HingedDoorRig[];
   ritualItems: RitualWorldItem[];
   notes: WorldNoteProp[];
   shrineDiyas: ShrineDiyaProp[];
@@ -93,9 +108,19 @@ export interface HaveliWorld {
   cursedSeals: CursedSealProp[];
   waypoints: WaypointNode[];
   flickerLights: Array<{ light: THREE.PointLight; baseIntensity: number; phase: number; flame?: THREE.Mesh }>;
+  emberEmitters: THREE.Vector3[];
   getRoomName: (x: number, z: number) => string;
   hasLineOfSight: (a: THREE.Vector3, b: THREE.Vector3) => boolean;
-  resolvePlayerCollision: (pos: THREE.Vector3, radius: number) => void;
+  resolvePlayerCollision: (
+    pos: THREE.Vector3,
+    radius: number,
+    feetY?: number,
+    bodyHeight?: number,
+    ignoreDoors?: boolean
+  ) => void;
+  hasHeadroomAt: (x: number, z: number, radius: number, targetHeight: number) => boolean;
+  evaluateStealthCover: (x: number, z: number, stance: PlayerStance, out: StealthCoverCheck) => StealthCoverCheck;
+  applyQualityMaterials: (isLowQuality: boolean) => void;
   randomizeItemSpawns: () => void;
   configureForChapter: (chapter: ChapterNumber) => void;
 }
@@ -127,21 +152,27 @@ export function buildHaveliWorld(
   const WALL_H = 3.85;
   const WALL_T = 0.42;
 
-  // Shared PBR Materials
+  // Shared PBR Materials with calibrated diffuse + bump + roughness maps (High vs Low toggleable)
   const plasterMat = new THREE.MeshStandardMaterial({
     map: textures.plasterColor,
     bumpMap: textures.plasterBump,
-    bumpScale: 0.055,
-    roughness: 0.9,
+    bumpScale: isLowQuality ? 0.035 : 0.068,
+    roughnessMap: isLowQuality ? null : textures.plasterRoughness,
+    roughness: 0.92,
     metalness: 0.04,
   });
+
+  const stoneFloorRoughness = textures.stoneRoughness.clone();
+  stoneFloorRoughness.repeat.set(9, 9);
+  stoneFloorRoughness.needsUpdate = true;
 
   const stoneFloorMat = new THREE.MeshStandardMaterial({
     map: textures.stoneColor.clone(),
     bumpMap: textures.stoneBump.clone(),
-    bumpScale: 0.04,
-    roughness: 0.86,
-    metalness: 0.06,
+    bumpScale: isLowQuality ? 0.028 : 0.052,
+    roughnessMap: isLowQuality ? null : stoneFloorRoughness,
+    roughness: 0.88,
+    metalness: 0.08,
   });
   stoneFloorMat.map!.repeat.set(9, 9);
   stoneFloorMat.bumpMap!.repeat.set(9, 9);
@@ -149,17 +180,32 @@ export function buildHaveliWorld(
   const woodMat = new THREE.MeshStandardMaterial({
     map: textures.woodColor,
     bumpMap: textures.woodBump,
-    bumpScale: 0.035,
-    roughness: 0.82,
+    bumpScale: isLowQuality ? 0.024 : 0.042,
+    roughnessMap: isLowQuality ? null : textures.woodRoughness,
+    roughness: 0.86,
     metalness: 0.06,
   });
 
   const ceilingMat = new THREE.MeshStandardMaterial({
-    color: 0x1c1714,
+    color: 0x1a1512,
     map: textures.woodColor,
-    roughness: 0.92,
+    roughness: 0.94,
     metalness: 0.04,
   });
+
+  const applyQualityMaterials = (lowQuality: boolean) => {
+    plasterMat.roughnessMap = lowQuality ? null : textures.plasterRoughness;
+    plasterMat.bumpScale = lowQuality ? 0.035 : 0.068;
+    plasterMat.needsUpdate = true;
+
+    stoneFloorMat.roughnessMap = lowQuality ? null : stoneFloorRoughness;
+    stoneFloorMat.bumpScale = lowQuality ? 0.028 : 0.052;
+    stoneFloorMat.needsUpdate = true;
+
+    woodMat.roughnessMap = lowQuality ? null : textures.woodRoughness;
+    woodMat.bumpScale = lowQuality ? 0.024 : 0.042;
+    woodMat.needsUpdate = true;
+  };
 
   const jaliMat = new THREE.MeshStandardMaterial({
     map: textures.jaliColor,
@@ -176,6 +222,19 @@ export function buildHaveliWorld(
     metalness: 0.05,
   });
 
+  // Shared BoxGeometry cache so identical walls, beams, trim & props share GPU buffers
+  const boxGeoCache = new Map<string, THREE.BoxGeometry>();
+  const getBoxGeo = (w: number, h: number, d: number): THREE.BoxGeometry => {
+    const key = `${w.toFixed(2)}_${h.toFixed(2)}_${d.toFixed(2)}`;
+    let geo = boxGeoCache.get(key);
+    if (!geo) {
+      geo = new THREE.BoxGeometry(w, h, d);
+      boxGeoCache.set(key, geo);
+    }
+    return geo;
+  };
+  const sharedCorbelGeo = getBoxGeo(0.24, 0.44, 0.46);
+
   // Helper to add a wall segment with automatic collision AABB
   const addWall = (
     x: number,
@@ -187,9 +246,9 @@ export function buildHaveliWorld(
     solid = true,
     mat: THREE.Material = plasterMat
   ) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    const mesh = new THREE.Mesh(getBoxGeo(w, h, d), mat);
     mesh.position.set(x, yBase + h / 2, z);
-    mesh.castShadow = !isLowQuality;
+    mesh.castShadow = true;
     mesh.receiveShadow = true;
     root.add(mesh);
 
@@ -199,6 +258,7 @@ export function buildHaveliWorld(
         maxX: x + w / 2,
         minZ: z - d / 2,
         maxZ: z + d / 2,
+        isCover: true,
       });
     }
     return mesh;
@@ -210,17 +270,17 @@ export function buildHaveliWorld(
     header.position.set(x, 0, z);
     if (rotatedY) header.rotation.y = Math.PI / 2;
 
-    const topBeam = new THREE.Mesh(new THREE.BoxGeometry(span + 0.2, 0.92, 0.44), plasterMat);
+    const topBeam = new THREE.Mesh(getBoxGeo(span + 0.2, 0.92, 0.44), plasterMat);
     topBeam.position.y = WALL_H - 0.46;
     header.add(topBeam);
 
     // Scalloped dark wood arch trim moldings
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(span, 0.14, 0.48), woodMat);
+    const trim = new THREE.Mesh(getBoxGeo(span, 0.14, 0.48), woodMat);
     trim.position.y = WALL_H - 0.92;
     header.add(trim);
 
     [-span / 2 + 0.14, span / 2 - 0.14].forEach((sx) => {
-      const corbel = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.44, 0.46), woodMat);
+      const corbel = new THREE.Mesh(sharedCorbelGeo, woodMat);
       corbel.position.set(sx, WALL_H - 1.12, 0);
       corbel.rotation.z = sx < 0 ? 0.35 : -0.35;
       header.add(corbel);
@@ -251,27 +311,29 @@ export function buildHaveliWorld(
   // Double-height upper courtyard walls + ornate carved jali balustrade balcony (matching Reference 1)
   const upperBalconyY = WALL_H + 0.15;
   const balconyH = 1.45;
-  const addUpperCourtyardEdge = (x: number, z: number, len: number, rotY: number) => {
+  const sharedJaliPlaneGeo = new THREE.PlaneGeometry(10.4, balconyH);
+  const sharedBalconyRailGeo = getBoxGeo(10.55, 0.12, 0.18);
+  const sharedBalconyLedgeGeo = getBoxGeo(10.6, 0.22, 0.35);
+  const sharedUpperWallGeo = getBoxGeo(12.8, 3.2, 0.3);
+
+  const addUpperCourtyardEdge = (x: number, z: number, _len: number, rotY: number) => {
     const g = new THREE.Group();
     g.position.set(x, upperBalconyY, z);
     g.rotation.y = rotY;
 
-    // Carved lattice balustrade
-    const jali = new THREE.Mesh(new THREE.PlaneGeometry(len, balconyH), jaliMat);
+    const jali = new THREE.Mesh(sharedJaliPlaneGeo, jaliMat);
     jali.position.y = balconyH / 2;
     g.add(jali);
 
-    // Wooden handrail & lower ledge
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(len + 0.15, 0.12, 0.18), woodMat);
+    const rail = new THREE.Mesh(sharedBalconyRailGeo, woodMat);
     rail.position.y = balconyH + 0.04;
     g.add(rail);
 
-    const baseLedge = new THREE.Mesh(new THREE.BoxGeometry(len + 0.2, 0.22, 0.35), plasterMat);
+    const baseLedge = new THREE.Mesh(sharedBalconyLedgeGeo, plasterMat);
     baseLedge.position.y = 0;
     g.add(baseLedge);
 
-    // Tall shadowed second-floor backdrop wall behind balcony
-    const upperWall = new THREE.Mesh(new THREE.BoxGeometry(len + 2.4, 3.2, 0.3), plasterMat);
+    const upperWall = new THREE.Mesh(sharedUpperWallGeo, plasterMat);
     upperWall.position.set(0, 1.5, -1.6);
     g.add(upperWall);
 
@@ -290,10 +352,10 @@ export function buildHaveliWorld(
   addWall(-15, 0, WALL_T, 30.4); // West outer
   addWall(15, 0, WALL_T, 30.4);  // East outer
 
-  // Heavy barred 1980s Haveli Main Entrance Gate on South outer wall (locked until Moksha)
-  const mainDoor = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.9, 0.24), woodMat);
-  mainDoor.position.set(0, 1.45, 14.72);
-  root.add(mainDoor);
+  // Heavy rusted wrought-iron 1984 Haveli Main Entrance Gate on South outer wall (padlocked until Moksha)
+  const mainGate = createRustedIronGate(textures);
+  mainGate.position.set(0, 0, 14.72);
+  root.add(mainGate);
 
   // =========================================================
   // 3. CENTRAL COURTYARD (AANGAN) COLONNADE PILLARS & HAVAN KUND
@@ -317,6 +379,7 @@ export function buildHaveliWorld(
       maxX: px + 0.28,
       minZ: pz - 0.28,
       maxZ: pz + 0.28,
+      isCover: true,
     });
   });
 
@@ -326,11 +389,15 @@ export function buildHaveliWorld(
   root.add(havanKund.root);
   colliders.push({ minX: -1.28, maxX: 1.28, minZ: -1.28, maxZ: 1.28 });
 
-  // Hanging overhead courtyard brass temple bells (matching Reference 1 top frame)
+  // Hanging overhead courtyard brass temple bells (weathered hammered brass PBR)
   const brassBellMat = new THREE.MeshStandardMaterial({
-    color: 0xa27e3d,
-    roughness: 0.34,
-    metalness: 0.84,
+    map: textures.brassColor,
+    bumpMap: textures.brassBump,
+    bumpScale: 0.02,
+    roughnessMap: textures.brassRoughness,
+    color: 0xb68f44,
+    roughness: 0.38,
+    metalness: 0.86,
   });
   [-1.2, 0, 1.2].forEach((bx, idx) => {
     const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.6, 6), brassBellMat);
@@ -396,6 +463,49 @@ export function buildHaveliWorld(
   addArchHeader(8.8, 7.3, 2.8, false);
 
   // =========================================================
+  // 4B. FOUR INTERACTIVE HINGED CARVED-TEAK WING DOORS
+  // =========================================================
+  const hingedDoors: HingedDoorRig[] = [
+    createHingedHaveliDoor(
+      'door_pooja',
+      'Pooja Room',
+      new THREE.Vector3(0, 0, -7.5),
+      3.4,
+      Math.PI,
+      textures,
+      false
+    ),
+    createHingedHaveliDoor(
+      'door_storeroom',
+      'Storeroom',
+      new THREE.Vector3(0, 0, 7.5),
+      3.4,
+      0,
+      textures,
+      true
+    ),
+    createHingedHaveliDoor(
+      'door_bedroom',
+      'Master Bedroom',
+      new THREE.Vector3(-7.5, 0, 0),
+      4.0,
+      -Math.PI / 2,
+      textures,
+      false
+    ),
+    createHingedHaveliDoor(
+      'door_kitchen',
+      'Old Kitchen',
+      new THREE.Vector3(7.5, 0, 0),
+      4.0,
+      Math.PI / 2,
+      textures,
+      false
+    ),
+  ];
+  hingedDoors.forEach((d) => root.add(d.root));
+
+  // =========================================================
   // 5. ARCHITECTURAL DRESSING: WINDOWS, TAPESTRIES, FURNITURE, DIYAS
   // =========================================================
 
@@ -421,17 +531,17 @@ export function buildHaveliWorld(
   addTapestry(0, 2.15, -14.74, 0, 2.8, 2.5); // Pooja room backdrop
   addTapestry(-14.74, 2.1, 4.2, Math.PI / 2, 2.2, 2.1); // Bedroom tapestry
 
-  // Leaning dusty picture frames along corridors (matching Reference 3)
+  // Leaning dusty picture frames along corridors (reusing shared frame & canvas geometry/material)
+  const leaningFrameGeo = getBoxGeo(0.86, 1.12, 0.06);
+  const leaningCanvasGeo = new THREE.PlaneGeometry(0.72, 0.96);
+  const leaningCanvasMat = new THREE.MeshStandardMaterial({ color: 0x1c1816, roughness: 0.95 });
   const addLeaningFrame = (x: number, z: number, rotY: number) => {
     const fg = new THREE.Group();
     fg.position.set(x, 0.56, z);
     fg.rotation.y = rotY;
     fg.rotation.x = -0.18;
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.86, 1.12, 0.06), woodMat);
-    const canvas = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.72, 0.96),
-      new THREE.MeshStandardMaterial({ color: 0x1c1816, roughness: 0.95 })
-    );
+    const frame = new THREE.Mesh(leaningFrameGeo, woodMat);
+    const canvas = new THREE.Mesh(leaningCanvasGeo, leaningCanvasMat);
     canvas.position.z = 0.032;
     fg.add(frame, canvas);
     root.add(fg);
@@ -441,16 +551,16 @@ export function buildHaveliWorld(
   addLeaningFrame(-14.5, -5.2, Math.PI / 2 + 0.08);
   addLeaningFrame(14.5, 5.4, -Math.PI / 2 - 0.1);
 
-  // Bedroom vintage wooden charpai / bedframe
+  // Bedroom vintage wooden charpai / bedframe (raised underside clearance 0.58m so Prone player can crawl underneath!)
   const bed = new THREE.Group();
   bed.position.set(-12.8, 0, 0.4);
-  const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.16, 1.45), woodMat);
-  bedFrame.position.y = 0.45;
+  const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.14, 1.45), woodMat);
+  bedFrame.position.y = 0.65;
   const mattress = new THREE.Mesh(
     new THREE.BoxGeometry(1.96, 0.14, 1.32),
     new THREE.MeshStandardMaterial({ color: 0x3a2b2b, roughness: 0.94 })
   );
-  mattress.position.y = 0.58;
+  mattress.position.y = 0.77;
   bed.add(bedFrame, mattress);
   [
     [-0.95, -0.62],
@@ -458,12 +568,19 @@ export function buildHaveliWorld(
     [-0.95, 0.62],
     [0.95, 0.62],
   ].forEach(([lx, lz]) => {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.95, 0.1), woodMat);
-    post.position.set(lx, 0.475, lz);
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.12, 0.1), woodMat);
+    post.position.set(lx, 0.56, lz);
     bed.add(post);
   });
   root.add(bed);
-  colliders.push({ minX: -13.95, maxX: -11.65, minZ: -0.4, maxZ: 1.2 });
+  colliders.push({
+    minX: -13.95,
+    maxX: -11.65,
+    minZ: -0.4,
+    maxZ: 1.2,
+    crawlUnderY: 0.58,
+    isCover: true,
+  });
 
   // Old Kitchen stone hearth / chulha counter along East wall
   const counter = new THREE.Mesh(
@@ -472,23 +589,52 @@ export function buildHaveliWorld(
   );
   counter.position.set(14.2, 0.425, -0.2);
   root.add(counter);
-  colliders.push({ minX: 13.55, maxX: 14.85, minZ: -2.15, maxZ: 1.75 });
+  colliders.push({ minX: 13.55, maxX: 14.85, minZ: -2.15, maxZ: 1.75, isCover: true });
 
-  // Storeroom wooden crates
+  // Storeroom wooden crates (low crates can be jumped over or crouched behind)
   const cratePositions: Array<[number, number, number]> = [
     [-5.4, 0.45, 13.6],
-    [-4.5, 0.4, 13.9],
+    [-4.5, 0.28, 13.9],
     [5.4, 0.48, 13.5],
   ];
   cratePositions.forEach(([cx, cy, cz]) => {
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.9, cy * 2, 0.9), woodMat);
+    const crate = new THREE.Mesh(getBoxGeo(0.9, cy * 2, 0.9), woodMat);
     crate.position.set(cx, cy, cz);
     crate.castShadow = !isLowQuality;
     root.add(crate);
-    colliders.push({ minX: cx - 0.5, maxX: cx + 0.5, minZ: cz - 0.5, maxZ: cz + 0.5 });
+    colliders.push({
+      minX: cx - 0.5,
+      maxX: cx + 0.5,
+      minZ: cz - 0.5,
+      maxZ: cz + 0.5,
+      maxY: cy * 2 <= 0.62 ? cy * 2 : undefined,
+      isCover: true,
+    });
   });
 
-  // Wooden tables at all 8 ritual item spawn spots so items sit naturally on tables (Reference 2)
+  // Low broken wooden timber beams & fallen debris obstacles (jumpable with Space / Jump button!)
+  const debrisSpecs: Array<{ x: number; z: number; w: number; h: number; d: number; rotY?: number }> = [
+    { x: -3.2, z: 6.2, w: 1.55, h: 0.36, d: 0.34 },   // South veranda low fallen beam
+    { x: 3.3, z: -6.2, w: 1.5, h: 0.38, d: 0.34 },    // North veranda broken timber
+    { x: -6.2, z: -3.1, w: 0.34, h: 0.36, d: 1.45 },  // West colonnade collapsed plank
+    { x: 6.2, z: 3.1, w: 0.34, h: 0.38, d: 1.45 },    // East colonnade collapsed plank
+  ];
+  debrisSpecs.forEach((db) => {
+    const beam = new THREE.Mesh(getBoxGeo(db.w, db.h, db.d), woodMat);
+    beam.position.set(db.x, db.h / 2, db.z);
+    beam.receiveShadow = true;
+    root.add(beam);
+    colliders.push({
+      minX: db.x - db.w / 2,
+      maxX: db.x + db.w / 2,
+      minZ: db.z - db.d / 2,
+      maxZ: db.z + db.d / 2,
+      maxY: db.h + 0.04,
+      isCover: true,
+    });
+  });
+
+  // Wooden tables at all 8 ritual item spawn spots (crawlUnderY: 0.72 lets Prone player crawl right underneath!)
   ITEM_SPAWN_POOL.forEach((slot) => {
     const table = createWoodenTable(textures, 1.15, 0.72);
     table.position.set(slot.pos.x, 0, slot.pos.z);
@@ -498,12 +644,16 @@ export function buildHaveliWorld(
       maxX: slot.pos.x + 0.62,
       minZ: slot.pos.z - 0.42,
       maxZ: slot.pos.z + 0.42,
+      crawlUnderY: 0.72,
+      isCover: true,
     });
   });
 
-  // Scattered flickering ambient earthen diyas in corridors & rooms
+  // Scattered flickering ambient earthen diyas in corridors & rooms (shared geometries, shadows disabled)
   const clayMat = new THREE.MeshStandardMaterial({ color: 0x7b4328, roughness: 0.86 });
   const flameMat = new THREE.MeshBasicMaterial({ color: 0xffac40 });
+  const ambientDiyaCupGeo = new THREE.CylinderGeometry(0.09, 0.05, 0.05, 8);
+  const ambientDiyaFlameGeo = new THREE.ConeGeometry(0.028, 0.11, 6);
   const ambientDiyaSpots: Array<[number, number, number]> = [
     [0, 0.03, -10.8],   // Pooja room floor
     [-10.2, 0.03, 0.2], // Bedroom doorway
@@ -513,22 +663,32 @@ export function buildHaveliWorld(
     [5.6, 0.03, 5.6],   // Courtyard SE corner
   ];
   ambientDiyaSpots.forEach(([dx, dy, dz], idx) => {
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.05, 0.05, 10), clayMat);
+    const cup = new THREE.Mesh(ambientDiyaCupGeo, clayMat);
     cup.position.set(dx, dy, dz);
     root.add(cup);
 
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.11, 7), flameMat);
+    const flame = new THREE.Mesh(ambientDiyaFlameGeo, flameMat);
     flame.position.set(dx, dy + 0.075, dz);
     root.add(flame);
 
-    // Limit active point lights on low quality for crisp 60fps on budget Android devices
     if (!isLowQuality || idx < 3) {
       const pLight = new THREE.PointLight(0xff8e30, 1.45, 7.2, 1.85);
       pLight.position.set(dx, dy + 0.28, dz);
+      pLight.castShadow = false;
       root.add(pLight);
       flickerLights.push({ light: pLight, baseIntensity: 1.45, phase: idx * 1.7, flame });
     }
   });
+
+  // Base warm ember emitter locations (Havan Kund + ambient corridor diyas)
+  const emberEmitters: THREE.Vector3[] = [
+    new THREE.Vector3(0, 0.56, 0),
+    new THREE.Vector3(-0.74, 0.56, -0.74),
+    new THREE.Vector3(0.74, 0.56, -0.74),
+    new THREE.Vector3(-0.74, 0.56, 0.74),
+    new THREE.Vector3(0.74, 0.56, 0.74),
+    ...ambientDiyaSpots.map(([dx, dy, dz]) => new THREE.Vector3(dx, dy + 0.12, dz)),
+  ];
 
   // =========================================================
   // 6. FOUR CLIMB-IN WOODEN ALMIRAHS FOR HIDING
@@ -548,6 +708,7 @@ export function buildHaveliWorld(
       maxX: spec.pos.x + 0.52,
       minZ: spec.pos.z - 0.52,
       maxZ: spec.pos.z + 0.52,
+      isCover: true,
     });
     return rig;
   });
@@ -614,34 +775,32 @@ export function buildHaveliWorld(
     { id: 'diya_storeroom', room: 'Storeroom', pos: [-2.6, 12.6] },
   ];
 
+  const shrinePedestalGeo = new THREE.CylinderGeometry(0.22, 0.28, 0.72, 10);
+  const shrineBowlGeo = new THREE.CylinderGeometry(0.18, 0.1, 0.1, 10);
+  const shrineBowlMat = new THREE.MeshStandardMaterial({ color: 0x8f5130, roughness: 0.82 });
+  const shrineFlameGeo = new THREE.ConeGeometry(0.055, 0.22, 7);
+  const shrineFlameMat = new THREE.MeshBasicMaterial({ color: 0xffb845 });
+  const shrineAuraGeo = new THREE.RingGeometry(0.32, 0.48, 20);
+
   const shrineDiyas: ShrineDiyaProp[] = shrineDiyaSpecs.map((spec) => {
     const group = new THREE.Group();
     group.position.set(spec.pos[0], 0, spec.pos[1]);
 
-    const pedestal = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.22, 0.28, 0.72, 10),
-      stoneFloorMat
-    );
+    const pedestal = new THREE.Mesh(shrinePedestalGeo, stoneFloorMat);
     pedestal.position.y = 0.36;
     group.add(pedestal);
 
-    const bowl = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.1, 0.1, 12),
-      new THREE.MeshStandardMaterial({ color: 0x8f5130, roughness: 0.82 })
-    );
+    const bowl = new THREE.Mesh(shrineBowlGeo, shrineBowlMat);
     bowl.position.y = 0.77;
     group.add(bowl);
 
-    const flameMesh = new THREE.Mesh(
-      new THREE.ConeGeometry(0.055, 0.22, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffb845 })
-    );
+    const flameMesh = new THREE.Mesh(shrineFlameGeo, shrineFlameMat);
     flameMesh.position.y = 0.92;
     flameMesh.visible = false;
     group.add(flameMesh);
 
     const auraRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.32, 0.48, 24),
+      shrineAuraGeo,
       new THREE.MeshBasicMaterial({
         color: 0xf5ba54,
         transparent: true,
@@ -657,6 +816,7 @@ export function buildHaveliWorld(
     const light = !isLowQuality ? new THREE.PointLight(0xff9b38, 0, 6.5, 1.8) : null;
     if (light) {
       light.position.y = 1.15;
+      light.castShadow = false;
       group.add(light);
     }
 
@@ -683,6 +843,12 @@ export function buildHaveliWorld(
     { id: 'bell_storeroom', room: 'Storeroom', label: '4th Bell (Storeroom)', pos: [0, 11.4] },
   ];
 
+  const chBellChainGeo = new THREE.CylinderGeometry(0.015, 0.015, 1.45, 6);
+  const chBellBodyGeo = new THREE.ConeGeometry(0.24, 0.42, 12);
+  const chBellRopeGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.72, 6);
+  const chBellRopeMat = new THREE.MeshStandardMaterial({ color: 0x992626, roughness: 0.9 });
+  const chBellAuraGeo = new THREE.RingGeometry(0.42, 0.62, 22);
+
   const chapterBells: ChapterBellProp[] = bellSpecs.map((spec, idx) => {
     const group = new THREE.Group();
     group.position.set(spec.pos[0], 0, spec.pos[1]);
@@ -690,25 +856,22 @@ export function buildHaveliWorld(
     const bellPivot = new THREE.Group();
     bellPivot.position.y = WALL_H - 0.1;
 
-    const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 1.45, 6), brassBellMat);
+    const chain = new THREE.Mesh(chBellChainGeo, brassBellMat);
     chain.position.y = -0.725;
     bellPivot.add(chain);
 
-    const bellBody = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 14), brassBellMat);
+    const bellBody = new THREE.Mesh(chBellBodyGeo, brassBellMat);
     bellBody.position.y = -1.55;
     bellPivot.add(bellBody);
 
-    const rope = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.018, 0.018, 0.72, 6),
-      new THREE.MeshStandardMaterial({ color: 0x992626, roughness: 0.9 })
-    );
+    const rope = new THREE.Mesh(chBellRopeGeo, chBellRopeMat);
     rope.position.y = -2.02;
     bellPivot.add(rope);
 
     group.add(bellPivot);
 
     const auraRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.42, 0.62, 26),
+      chBellAuraGeo,
       new THREE.MeshBasicMaterial({
         color: 0xf4c259,
         transparent: true,
@@ -747,29 +910,31 @@ export function buildHaveliWorld(
     { id: 'seal_storeroom', room: 'Storeroom', pos: [4.2, 13.4] },
   ];
 
+  const sealStakeGeo = getBoxGeo(0.16, 1.48, 0.16);
+  const sealTalismanGeo = new THREE.OctahedronGeometry(0.28, 0);
+  const sealTalismanMat = new THREE.MeshStandardMaterial({
+    color: 0xb81d26,
+    emissive: 0xd9262e,
+    emissiveIntensity: 1.4,
+    roughness: 0.35,
+    metalness: 0.2,
+  });
+  const sealAuraGeo = new THREE.RingGeometry(0.36, 0.56, 20);
+
   const cursedSeals: CursedSealProp[] = sealSpecs.map((spec) => {
     const group = new THREE.Group();
     group.position.set(spec.pos[0], 0, spec.pos[1]);
 
-    const stake = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.48, 0.16), woodMat);
+    const stake = new THREE.Mesh(sealStakeGeo, woodMat);
     stake.position.y = 0.74;
     group.add(stake);
 
-    const talismanMesh = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.28, 0),
-      new THREE.MeshStandardMaterial({
-        color: 0xb81d26,
-        emissive: 0xd9262e,
-        emissiveIntensity: 1.4,
-        roughness: 0.35,
-        metalness: 0.2,
-      })
-    );
+    const talismanMesh = new THREE.Mesh(sealTalismanGeo, sealTalismanMat);
     talismanMesh.position.y = 1.62;
     group.add(talismanMesh);
 
     const auraRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.36, 0.56, 24),
+      sealAuraGeo,
       new THREE.MeshBasicMaterial({
         color: 0xe63946,
         transparent: true,
@@ -785,6 +950,7 @@ export function buildHaveliWorld(
     const light = !isLowQuality ? new THREE.PointLight(0xe62c36, 1.6, 5.8, 1.8) : null;
     if (light) {
       light.position.y = 1.6;
+      light.castShadow = false;
       group.add(light);
     }
 
@@ -907,46 +1073,133 @@ export function buildHaveliWorld(
     return 'Arched Corridor';
   };
 
-  const resolvePlayerCollision = (pos: THREE.Vector3, radius: number) => {
+  const resolvePlayerCollision = (
+    pos: THREE.Vector3,
+    radius: number,
+    feetY = 0,
+    bodyHeight = 1.75,
+    ignoreDoors = false
+  ) => {
     // Hard outer perimeter clamp
     pos.x = Math.max(-14.3, Math.min(14.3, pos.x));
     pos.z = Math.max(-14.3, Math.min(14.3, pos.z));
 
+    const pushOutBox = (box: { minX: number; maxX: number; minZ: number; maxZ: number }) => {
+      const closestX = Math.max(box.minX, Math.min(pos.x, box.maxX));
+      const closestZ = Math.max(box.minZ, Math.min(pos.z, box.maxZ));
+      const dx = pos.x - closestX;
+      const dz = pos.z - closestZ;
+      const distSq = dx * dx + dz * dz;
+
+      if (distSq < radius * radius) {
+        const dist = Math.sqrt(distSq);
+        if (dist > 0.0001) {
+          const push = radius - dist;
+          pos.x += (dx / dist) * push;
+          pos.z += (dz / dist) * push;
+        } else {
+          const overlapL = Math.abs(pos.x - box.minX);
+          const overlapR = Math.abs(box.maxX - pos.x);
+          const overlapT = Math.abs(pos.z - box.minZ);
+          const overlapB = Math.abs(box.maxZ - pos.z);
+          const minO = Math.min(overlapL, overlapR, overlapT, overlapB);
+          if (minO === overlapL) pos.x = box.minX - radius;
+          else if (minO === overlapR) pos.x = box.maxX + radius;
+          else if (minO === overlapT) pos.z = box.minZ - radius;
+          else pos.z = box.maxZ + radius;
+        }
+      }
+    };
+
     for (let iter = 0; iter < 2; iter++) {
       for (let i = 0; i < colliders.length; i++) {
         const box = colliders[i];
-        const closestX = Math.max(box.minX, Math.min(pos.x, box.maxX));
-        const closestZ = Math.max(box.minZ, Math.min(pos.z, box.maxZ));
-        const dx = pos.x - closestX;
-        const dz = pos.z - closestZ;
-        const distSq = dx * dx + dz * dz;
+        if (box.crawlUnderY !== undefined && feetY + bodyHeight <= box.crawlUnderY) {
+          continue;
+        }
+        if (box.maxY !== undefined && feetY >= box.maxY - 0.14) {
+          continue;
+        }
+        pushOutBox(box);
+      }
 
-        if (distSq < radius * radius) {
-          const dist = Math.sqrt(distSq);
-          if (dist > 0.0001) {
-            const push = radius - dist;
-            pos.x += (dx / dist) * push;
-            pos.z += (dz / dist) * push;
-          } else {
-            // Inside box fallback: push out along nearest edge
-            const overlapL = Math.abs(pos.x - box.minX);
-            const overlapR = Math.abs(box.maxX - pos.x);
-            const overlapT = Math.abs(pos.z - box.minZ);
-            const overlapB = Math.abs(box.maxZ - pos.z);
-            const minO = Math.min(overlapL, overlapR, overlapT, overlapB);
-            if (minO === overlapL) pos.x = box.minX - radius;
-            else if (minO === overlapR) pos.x = box.maxX + radius;
-            else if (minO === overlapT) pos.z = box.minZ - radius;
-            else pos.z = box.maxZ + radius;
+      // Dynamic collision against closed hinged wing doors
+      if (!ignoreDoors) {
+        for (let d = 0; d < hingedDoors.length; d++) {
+          const door = hingedDoors[d];
+          if (door.openAmount < 0.42) {
+            pushOutBox(door.closedBox);
           }
         }
       }
     }
   };
 
-  // Fast 2D segment-vs-AABB ray check against structural walls for Ghost vision
+  /** Checks whether the player has vertical clearance to stand/crouch up (prevents clipping into tabletops/charpai). */
+  const hasHeadroomAt = (x: number, z: number, radius: number, targetHeight: number): boolean => {
+    const rSq = (radius * 0.85) * (radius * 0.85);
+    for (let i = 0; i < colliders.length; i++) {
+      const box = colliders[i];
+      if (box.crawlUnderY === undefined) continue;
+      if (targetHeight <= box.crawlUnderY) continue;
+      const cx = Math.max(box.minX, Math.min(x, box.maxX));
+      const cz = Math.max(box.minZ, Math.min(z, box.maxZ));
+      const dx = x - cx;
+      const dz = z - cz;
+      if (dx * dx + dz * dz < rSq) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  /** Zero-allocation stealth probe checking if player is prone under furniture or crouching against cover/corners. */
+  const evaluateStealthCover = (
+    x: number,
+    z: number,
+    stance: PlayerStance,
+    out: StealthCoverCheck
+  ): StealthCoverCheck => {
+    out.underFurniture = false;
+    out.nearCover = false;
+    if (stance === 'standing') return out;
+
+    const coverDistSq = 0.88 * 0.88;
+    const underPad = 0.14;
+
+    for (let i = 0; i < colliders.length; i++) {
+      const box = colliders[i];
+      if (stance === 'prone' && box.crawlUnderY !== undefined) {
+        if (
+          x >= box.minX - underPad &&
+          x <= box.maxX + underPad &&
+          z >= box.minZ - underPad &&
+          z <= box.maxZ + underPad
+        ) {
+          out.underFurniture = true;
+          out.nearCover = true;
+          return out;
+        }
+      }
+      if (!out.nearCover && box.isCover) {
+        const cx = Math.max(box.minX, Math.min(x, box.maxX));
+        const cz = Math.max(box.minZ, Math.min(z, box.maxZ));
+        const dx = x - cx;
+        const dz = z - cz;
+        if (dx * dx + dz * dz <= coverDistSq) {
+          out.nearCover = true;
+        }
+      }
+    }
+    return out;
+  };
+
+  // Fast 2D segment-vs-AABB ray check against structural full-height walls for Ghost vision
   const wallColliders = colliders.filter(
-    (c) => (c.maxX - c.minX > 1.8 || c.maxZ - c.minZ > 1.8)
+    (c) =>
+      c.crawlUnderY === undefined &&
+      c.maxY === undefined &&
+      (c.maxX - c.minX > 1.8 || c.maxZ - c.minZ > 1.8)
   );
 
   const segmentHitsAABB = (
@@ -988,10 +1241,27 @@ export function buildHaveliWorld(
         return false;
       }
     }
+    // Closed hinged wing doors also block ghost sightlines!
+    for (let d = 0; d < hingedDoors.length; d++) {
+      const door = hingedDoors[d];
+      if (door.openAmount < 0.35 && segmentHitsAABB(a.x, a.z, b.x, b.z, door.closedBox)) {
+        return false;
+      }
+    }
     return true;
   };
 
   const configureForChapter = (chapter: ChapterNumber) => {
+    // Reset hinged wing doors: Storeroom starts open so player steps smoothly into Aangan; other 3 wings closed
+    hingedDoors.forEach((door) => {
+      const startOpen = door.id === 'door_storeroom';
+      door.isOpen = startOpen;
+      door.openAmount = startOpen ? 1 : 0;
+      door.ghostPushCooldown = 0;
+      door.leftPivot.rotation.y = door.openAmount * 1.56;
+      door.rightPivot.rotation.y = -door.openAmount * 1.56;
+    });
+
     // Chapter 1: 5 Shrine Diyas
     shrineDiyas.forEach((d) => {
       d.lit = false;
@@ -1040,6 +1310,7 @@ export function buildHaveliWorld(
     colliders,
     havanKund,
     almirahs,
+    hingedDoors,
     ritualItems,
     notes,
     shrineDiyas,
@@ -1047,9 +1318,13 @@ export function buildHaveliWorld(
     cursedSeals,
     waypoints,
     flickerLights,
+    emberEmitters,
     getRoomName,
     hasLineOfSight,
     resolvePlayerCollision,
+    hasHeadroomAt,
+    evaluateStealthCover,
+    applyQualityMaterials,
     randomizeItemSpawns,
     configureForChapter,
   };

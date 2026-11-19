@@ -30,9 +30,16 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
   const gx = toSvg(mapData.ghostX);
   const gz = toSvg(mapData.ghostZ);
   const isChasing = ghostState === 'chase';
+  const isStaggered = ghostState === 'staggered';
   const isSearching = ghostState === 'investigate' || ghostState === 'search';
 
-  const statusText = isChasing ? 'CHASING' : isSearching ? 'HUNTING' : 'PATROL';
+  const statusText = isStaggered
+    ? 'STAGGERED'
+    : isChasing
+      ? 'CHASING'
+      : isSearching
+        ? 'HUNTING'
+        : 'PATROL';
 
   const renderSvgBlueprint = (svgClass: string) => (
     <svg

@@ -290,15 +290,66 @@ async function startServer() {
   const httpServer = http.createServer(app);
 
   if (!IS_PROD) {
+    process.env.DISABLE_HMR = 'true';
     const { createServer: createViteServer } = await import('vite');
-    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: hmrDisabled ? false : { server: httpServer },
+        hmr: false,
+        ws: false,
       },
       appType: 'spa',
     });
+
+    // When HMR/WebSockets are disabled behind a reverse proxy, serve a clean
+    // WebSocket-free /@vite/client shim so CSS injection and import.meta.hot work
+    // without triggering unreachable WebSocket connection errors.
+    app.get('/@vite/client', (_req, res) => {
+      res.type('application/javascript').send(`
+const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  }
+  style.textContent = content;
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    style.remove();
+    sheetsMap.delete(id);
+  }
+}
+export function injectQuery(url, queryToInject) {
+  if (!url.startsWith('.') && !url.startsWith('/')) return url;
+  const pathname = url.replace(/[?#].*$/, '');
+  const search = url.slice(pathname.length).replace(/#.*$/, '');
+  const hash = url.includes('#') ? url.slice(url.indexOf('#')) : '';
+  return pathname + (search ? search + '&' : '?') + queryToInject + hash;
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export class ErrorOverlay extends HTMLElement {}
+`);
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');

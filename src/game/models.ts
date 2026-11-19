@@ -17,6 +17,7 @@ export interface GhostRig {
   shantiParticles: THREE.Points;
   shantiVelocities: Float32Array;
   setDissolve: (t: number) => void;
+  updateClothWave: (elapsed: number, moveSpeed: number, highDetail: boolean) => void;
 }
 
 export interface HavanKundRig {
@@ -40,25 +41,218 @@ export interface AlmirahRig {
   exitPos: THREE.Vector3;
   facingYaw: number;
   doorOpenAmount: number;
+  doorSwingBoost: number;
+}
+
+export interface HingedDoorRig {
+  id: string;
+  roomName: string;
+  root: THREE.Group;
+  leftPivot: THREE.Group;
+  rightPivot: THREE.Group;
+  interactPos: THREE.Vector3;
+  isOpen: boolean;
+  openAmount: number; // 0 = closed, 1 = fully swung open
+  ghostPushCooldown: number;
+  closedBox: { minX: number; maxX: number; minZ: number; maxZ: number };
 }
 
 export interface FlashlightRig {
   viewGroup: THREE.Group;
   spotLight: THREE.SpotLight;
   beamMesh: THREE.Mesh;
+  innerBeamMesh: THREE.Mesh;
+  beamDustPoints: THREE.Points;
   lensMat: THREE.MeshStandardMaterial;
+  bulbMat: THREE.MeshBasicMaterial;
+  switchNub: THREE.Mesh;
+  sparkGroup: THREE.Group;
+  sparkCoreMesh: THREE.Mesh;
+  sparkCoreMat: THREE.MeshBasicMaterial;
+  sparkRays: Array<{ mesh: THREE.Mesh; dir: THREE.Vector3 }>;
+  sparkRayMat: THREE.MeshBasicMaterial;
+  sparkLight: THREE.PointLight;
+  updateBeamDust: (dt: number, elapsed: number, highDetail: boolean) => void;
 }
 
+interface SharedPropAssets {
+  contactShadowGeo: THREE.PlaneGeometry;
+  contactShadowMat: THREE.MeshBasicMaterial;
+  woodMat: THREE.MeshStandardMaterial;
+  woodTrimMat: THREE.MeshStandardMaterial;
+  stoneBaseMat: THREE.MeshStandardMaterial;
+  brassMat: THREE.MeshStandardMaterial;
+  ironMat: THREE.MeshStandardMaterial;
+  windowGlassMat: THREE.MeshBasicMaterial;
+  windowGrillMat: THREE.MeshStandardMaterial;
+  windowFrameMat: THREE.MeshStandardMaterial;
+  windowShaftMat: THREE.MeshBasicMaterial;
+  pillarPlinthGeo: THREE.BoxGeometry;
+  pillarCollarGeo: THREE.CylinderGeometry;
+  pillarCapitalGeo: THREE.BoxGeometry;
+  pillarChainGeo: THREE.CylinderGeometry;
+  pillarBellGeo: THREE.LatheGeometry;
+  tableLegGeo: THREE.BoxGeometry;
+  winGlassGeo: THREE.PlaneGeometry;
+  winGrillGeo: THREE.PlaneGeometry;
+  winTopGeo: THREE.BoxGeometry;
+  winBotGeo: THREE.BoxGeometry;
+  winShaftGeo: THREE.PlaneGeometry;
+  almBackGeo: THREE.BoxGeometry;
+  almSideGeo: THREE.BoxGeometry;
+  almCrownGeo: THREE.BoxGeometry;
+  almPlinthGeo: THREE.BoxGeometry;
+  almHandleGeo: THREE.CylinderGeometry;
+  almLowerDoorGeo: THREE.BoxGeometry;
+  almStileGeo: THREE.BoxGeometry;
+  almTopRailGeo: THREE.BoxGeometry;
+  almSlatGeo: THREE.BoxGeometry;
+  boxCache: Map<string, THREE.BoxGeometry>;
+  cylCache: Map<string, THREE.CylinderGeometry>;
+}
+
+const sharedAssetsByPack = new WeakMap<ProceduralTexturePack, SharedPropAssets>();
+
+function getSharedPropAssets(textures: ProceduralTexturePack): SharedPropAssets {
+  let cached = sharedAssetsByPack.get(textures);
+  if (cached) return cached;
+
+  const contactShadowGeo = new THREE.PlaneGeometry(2, 2);
+  contactShadowGeo.rotateX(-Math.PI / 2);
+
+  const bellPts = [
+    new THREE.Vector2(0.0, 0.18),
+    new THREE.Vector2(0.045, 0.16),
+    new THREE.Vector2(0.065, 0.08),
+    new THREE.Vector2(0.11, 0.0),
+  ];
+
+  const almW = 1.28;
+  const almH = 2.28;
+  const almD = 0.96;
+  const doorW = (almW - 0.18) / 2;
+  const doorH = almH - 0.2;
+
+  cached = {
+    contactShadowGeo,
+    contactShadowMat: new THREE.MeshBasicMaterial({
+      map: textures.contactShadow,
+      transparent: true,
+      opacity: 0.52,
+      depthWrite: false,
+    }),
+    woodMat: new THREE.MeshStandardMaterial({
+      map: textures.woodColor,
+      bumpMap: textures.woodBump,
+      bumpScale: 0.038,
+      roughnessMap: textures.woodRoughness,
+      roughness: 0.88,
+      metalness: 0.06,
+    }),
+    woodTrimMat: new THREE.MeshStandardMaterial({
+      color: 0x22140c,
+      bumpMap: textures.woodBump,
+      bumpScale: 0.025,
+      roughnessMap: textures.woodRoughness,
+      roughness: 0.72,
+      metalness: 0.12,
+    }),
+    stoneBaseMat: new THREE.MeshStandardMaterial({
+      map: textures.stoneColor,
+      bumpMap: textures.stoneBump,
+      bumpScale: 0.036,
+      roughnessMap: textures.stoneRoughness,
+      roughness: 0.9,
+      metalness: 0.06,
+    }),
+    brassMat: new THREE.MeshStandardMaterial({
+      map: textures.brassColor,
+      bumpMap: textures.brassBump,
+      bumpScale: 0.022,
+      roughnessMap: textures.brassRoughness,
+      roughness: 0.44,
+      metalness: 0.86,
+    }),
+    ironMat: new THREE.MeshStandardMaterial({
+      map: textures.ironColor,
+      bumpMap: textures.ironBump,
+      bumpScale: 0.032,
+      roughnessMap: textures.ironRoughness,
+      roughness: 0.82,
+      metalness: 0.62,
+    }),
+    windowGlassMat: new THREE.MeshBasicMaterial({ color: 0x3b7684 }),
+    windowGrillMat: new THREE.MeshStandardMaterial({
+      map: textures.grillColor,
+      alphaMap: textures.grillAlpha,
+      roughnessMap: textures.ironRoughness,
+      transparent: true,
+      alphaTest: 0.45,
+      roughness: 0.84,
+      metalness: 0.58,
+    }),
+    windowFrameMat: new THREE.MeshStandardMaterial({
+      map: textures.woodColor,
+      bumpMap: textures.woodBump,
+      bumpScale: 0.025,
+      roughness: 0.86,
+    }),
+    windowShaftMat: new THREE.MeshBasicMaterial({
+      color: 0x62b0c2,
+      transparent: true,
+      opacity: 0.095,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+    pillarPlinthGeo: new THREE.BoxGeometry(0.46, 0.34, 0.46),
+    pillarCollarGeo: new THREE.CylinderGeometry(0.2, 0.2, 0.11, 8),
+    pillarCapitalGeo: new THREE.BoxGeometry(0.56, 0.28, 0.56),
+    pillarChainGeo: new THREE.CylinderGeometry(0.008, 0.008, 0.42, 6),
+    pillarBellGeo: new THREE.LatheGeometry(bellPts, 10),
+    tableLegGeo: new THREE.BoxGeometry(0.075, 0.76, 0.075),
+    winGlassGeo: new THREE.PlaneGeometry(1.5, 1.9),
+    winGrillGeo: new THREE.PlaneGeometry(1.54, 1.94),
+    winTopGeo: new THREE.BoxGeometry(1.7, 0.12, 0.16),
+    winBotGeo: new THREE.BoxGeometry(1.74, 0.14, 0.22),
+    winShaftGeo: new THREE.PlaneGeometry(1.55, 4.4),
+    almBackGeo: new THREE.BoxGeometry(almW, almH, 0.08),
+    almSideGeo: new THREE.BoxGeometry(0.08, almH, almD),
+    almCrownGeo: new THREE.BoxGeometry(almW + 0.14, 0.14, almD + 0.12),
+    almPlinthGeo: new THREE.BoxGeometry(almW + 0.06, 0.12, almD + 0.04),
+    almHandleGeo: new THREE.CylinderGeometry(0.012, 0.012, 0.14, 8),
+    almLowerDoorGeo: new THREE.BoxGeometry(doorW - 0.015, doorH * 0.62, 0.05),
+    almStileGeo: new THREE.BoxGeometry(0.07, doorH * 0.38, 0.05),
+    almTopRailGeo: new THREE.BoxGeometry(doorW, 0.09, 0.05),
+    almSlatGeo: new THREE.BoxGeometry(doorW - 0.12, 0.04, 0.04),
+    boxCache: new Map(),
+    cylCache: new Map(),
+  };
+
+  sharedAssetsByPack.set(textures, cached);
+  return cached;
+}
+
+const _contactMatFallback = new WeakMap<THREE.CanvasTexture, THREE.MeshBasicMaterial>();
+const _contactUnitPlane = (() => {
+  const g = new THREE.PlaneGeometry(2, 2);
+  g.rotateX(-Math.PI / 2);
+  return g;
+})();
+
 function addContactShadow(parent: THREE.Object3D, shadowTex: THREE.CanvasTexture, radius: number, y = 0.012): void {
-  const geo = new THREE.PlaneGeometry(radius * 2, radius * 2);
-  geo.rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshBasicMaterial({
-    map: shadowTex,
-    transparent: true,
-    opacity: 0.52,
-    depthWrite: false,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
+  let mat = _contactMatFallback.get(shadowTex);
+  if (!mat) {
+    mat = new THREE.MeshBasicMaterial({
+      map: shadowTex,
+      transparent: true,
+      opacity: 0.52,
+      depthWrite: false,
+    });
+    _contactMatFallback.set(shadowTex, mat);
+  }
+  const mesh = new THREE.Mesh(_contactUnitPlane, mat);
+  mesh.scale.set(radius, 1, radius);
   mesh.position.y = y;
   parent.add(mesh);
 }
@@ -76,23 +270,38 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
   const sareeMaterial = new THREE.MeshStandardMaterial({
     map: textures.sareeColor,
     bumpMap: textures.sareeBump,
-    bumpScale: 0.035,
+    bumpScale: 0.042,
     roughness: 0.88,
     metalness: 0.08,
+    side: THREE.DoubleSide,
     transparent: true,
     opacity: 1,
   });
 
+  const veilMaterial = new THREE.MeshStandardMaterial({
+    map: textures.sareeColor,
+    bumpMap: textures.sareeBump,
+    bumpScale: 0.025,
+    color: 0x6a1d26,
+    roughness: 0.92,
+    metalness: 0.04,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.78,
+  });
+
   const zariGoldMat = new THREE.MeshStandardMaterial({
-    color: 0x9b7a38,
-    roughness: 0.42,
-    metalness: 0.72,
+    map: textures.brassColor,
+    roughnessMap: textures.brassRoughness,
+    color: 0xaa863e,
+    roughness: 0.44,
+    metalness: 0.76,
     transparent: true,
     opacity: 1,
   });
 
   const skinMaterial = new THREE.MeshStandardMaterial({
-    color: 0x8d9596,
+    color: 0x859092,
     roughness: 0.72,
     metalness: 0.04,
     transparent: true,
@@ -101,18 +310,18 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
 
   const faceMaterial = new THREE.MeshStandardMaterial({
     map: textures.ghostFaceColor,
-    roughness: 0.65,
+    roughness: 0.64,
     metalness: 0.05,
-    emissive: 0x10181a,
-    emissiveIntensity: 0.35,
+    emissive: 0x0e181c,
+    emissiveIntensity: 0.36,
     transparent: true,
     opacity: 1,
   });
 
   const hairMaterial = new THREE.MeshStandardMaterial({
-    color: 0x090a0c,
-    roughness: 0.94,
-    metalness: 0.05,
+    color: 0x08090c,
+    roughness: 0.92,
+    metalness: 0.06,
     side: THREE.DoubleSide,
     transparent: true,
     opacity: 1,
@@ -124,59 +333,84 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
     metalness: 0.92,
   });
 
-  // 1. Draped maroon saree lower skirt (LatheGeometry with subtle flaring hem)
+  // 1. Subdivided flared maroon saree skirt with tattered lower edge + stored rest buffer for live cloth wave
   const skirtPoints = [
-    new THREE.Vector2(0.31, 0.14),
-    new THREE.Vector2(0.28, 0.42),
-    new THREE.Vector2(0.23, 0.76),
-    new THREE.Vector2(0.18, 1.02),
-    new THREE.Vector2(0.21, 1.24),
-    new THREE.Vector2(0.16, 1.38),
+    new THREE.Vector2(0.35, 0.12),
+    new THREE.Vector2(0.32, 0.28),
+    new THREE.Vector2(0.29, 0.48),
+    new THREE.Vector2(0.25, 0.7),
+    new THREE.Vector2(0.21, 0.92),
+    new THREE.Vector2(0.18, 1.08),
+    new THREE.Vector2(0.21, 1.25),
+    new THREE.Vector2(0.16, 1.39),
   ];
-  const skirtGeo = new THREE.LatheGeometry(skirtPoints, 20);
-  // Add gentle vertical pleat ripples around circumference
-  const sPos = skirtGeo.attributes.position;
+  const skirtGeo = new THREE.LatheGeometry(skirtPoints, 22);
+  const sPos = skirtGeo.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < sPos.count; i++) {
     const x = sPos.getX(i);
-    const y = sPos.getY(i);
+    let y = sPos.getY(i);
     const z = sPos.getZ(i);
     const angle = Math.atan2(z, x);
-    const pleat = 1 + Math.sin(angle * 9) * 0.06 * (1 - y / 1.45);
+    const lowFactor = Math.max(0, 1 - y / 1.42);
+    const pleat = 1 + Math.sin(angle * 10) * 0.075 * lowFactor + Math.cos(angle * 5) * 0.03 * lowFactor;
+    if (y < 0.22) {
+      // Subtle tattered jagged hem contour
+      y += Math.sin(angle * 7) * 0.028 + Math.cos(angle * 13) * 0.015;
+    }
     sPos.setXYZ(i, x * pleat, y, z * pleat);
   }
   skirtGeo.computeVertexNormals();
+  const skirtBasePos = new Float32Array(sPos.array as Float32Array);
   const skirtMesh = new THREE.Mesh(skirtGeo, sareeMaterial);
   skirtMesh.castShadow = true;
   bodyGroup.add(skirtMesh);
 
   // Diagonal draped saree pallu across chest & left shoulder
-  const palluGeo = new THREE.CylinderGeometry(0.19, 0.24, 0.56, 12, 1, true, -0.7, 2.3);
+  const palluGeo = new THREE.CylinderGeometry(0.195, 0.25, 0.58, 14, 4, true, -0.75, 2.4);
   const palluMesh = new THREE.Mesh(palluGeo, sareeMaterial);
   palluMesh.position.set(-0.02, 1.17, 0.02);
   palluMesh.rotation.z = 0.22;
   bodyGroup.add(palluMesh);
 
   // Gold zari border sash strip along shoulder drape
-  const sashGeo = new THREE.BoxGeometry(0.055, 0.58, 0.28);
+  const sashGeo = new THREE.BoxGeometry(0.052, 0.58, 0.28);
   const sashMesh = new THREE.Mesh(sashGeo, zariGoldMat);
   sashMesh.position.set(-0.14, 1.18, 0.02);
   sashMesh.rotation.z = -0.34;
   bodyGroup.add(sashMesh);
 
-  // Tattered trailing pallu cloth hanging down left back/side
-  const trailGeo = new THREE.PlaneGeometry(0.24, 0.72, 4, 8);
-  const tPos = trailGeo.attributes.position;
+  // Flowing tattered trailing pallu cloth hanging down left back/side (animated vertex ribbon!)
+  const trailGeo = new THREE.PlaneGeometry(0.32, 0.92, 4, 10);
+  const tPos = trailGeo.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < tPos.count; i++) {
+    const tx = tPos.getX(i);
     const ty = tPos.getY(i);
-    tPos.setZ(i, Math.sin(ty * 6) * 0.04);
+    const droop = (0.46 - ty) / 0.92; // 0 at top shoulder -> 1 at tattered bottom tip
+    tPos.setXYZ(i, tx * (0.78 + droop * 0.45), ty, Math.sin(ty * 6.5) * 0.045 * droop);
   }
   trailGeo.computeVertexNormals();
+  const trailBasePos = new Float32Array(tPos.array as Float32Array);
   const trailMesh = new THREE.Mesh(trailGeo, sareeMaterial);
-  trailMesh.position.set(-0.21, 0.88, -0.08);
-  trailMesh.rotation.y = -0.5;
+  trailMesh.position.set(-0.22, 0.86, -0.1);
+  trailMesh.rotation.y = -0.52;
   bodyGroup.add(trailMesh);
 
-  // 2. Bare pale ankles, feet & silver payal anklets (matching Reference 3)
+  // Translucent tattered secondary bridal shroud drape behind shoulders (depth & ghostly silhouette)
+  const backVeilGeo = new THREE.PlaneGeometry(0.46, 1.12, 4, 8);
+  const bvPos = backVeilGeo.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < bvPos.count; i++) {
+    const vx = bvPos.getX(i);
+    const vy = bvPos.getY(i);
+    const droop = (0.56 - vy) / 1.12;
+    bvPos.setXYZ(i, vx * (0.65 + droop * 0.55), vy, -0.05 - Math.abs(vx) * 0.22);
+  }
+  backVeilGeo.computeVertexNormals();
+  const backVeilBasePos = new Float32Array(bvPos.array as Float32Array);
+  const backVeilMesh = new THREE.Mesh(backVeilGeo, veilMaterial);
+  backVeilMesh.position.set(0, 1.02, -0.15);
+  bodyGroup.add(backVeilMesh);
+
+  // 2. Bare pale ankles, feet & silver payal anklets
   [-0.085, 0.085].forEach((fx) => {
     const ankle = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.03, 0.16, 10), skinMaterial);
     ankle.position.set(fx, 0.09, 0.01);
@@ -186,7 +420,6 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
     foot.position.set(fx, 0.02, 0.045);
     bodyGroup.add(foot);
 
-    // Metallic silver payal ring + tiny ghungroo beads
     const payal = new THREE.Mesh(new THREE.TorusGeometry(0.039, 0.008, 8, 16), silverPayalMat);
     payal.rotation.x = Math.PI / 2;
     payal.position.set(fx, 0.055, 0.01);
@@ -200,29 +433,33 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
     }
   });
 
-  // 3. Pale gaunt arms
+  // 3. Pale gaunt arms with curved clawed fingers
   const buildArm = (side: -1 | 1): THREE.Group => {
     const armGroup = new THREE.Group();
     armGroup.position.set(side * 0.21, 1.35, 0);
 
-    // Maroon short blouse sleeve
     const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.056, 0.048, 0.15, 10), sareeMaterial);
     sleeve.position.y = -0.06;
     armGroup.add(sleeve);
 
-    // Gaunt upper & lower arm
-    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.032, 0.28, 8), skinMaterial);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.031, 0.28, 8), skinMaterial);
     upper.position.y = -0.22;
     armGroup.add(upper);
 
-    const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.024, 0.27, 8), skinMaterial);
+    const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.029, 0.022, 0.27, 8), skinMaterial);
     fore.position.set(0, -0.45, 0.04);
     fore.rotation.x = -0.22;
     armGroup.add(fore);
 
-    // Pale bony hand
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.11, 0.028), skinMaterial);
+    // Tarnished glass/gold bridal bangles around wrists
+    const bangle = new THREE.Mesh(new THREE.TorusGeometry(0.029, 0.006, 6, 12), zariGoldMat);
+    bangle.rotation.x = Math.PI / 2;
+    bangle.position.set(0, -0.54, 0.06);
+    armGroup.add(bangle);
+
+    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.11, 0.024), skinMaterial);
     hand.position.set(0, -0.61, 0.08);
+    hand.rotation.x = -0.18;
     armGroup.add(hand);
 
     return armGroup;
@@ -232,8 +469,8 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
   const rightArm = buildArm(1);
   bodyGroup.add(leftArm, rightArm);
 
-  // 4. Neck, sculpted pale face & dense cascading messy black hair
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.058, 0.12, 10), skinMaterial);
+  // 4. Neck, sculpted shrouded head, gaunt face & flowing dark hair ribbons
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.058, 0.12, 10), skinMaterial);
   neck.position.set(0, 1.43, 0.01);
   bodyGroup.add(neck);
 
@@ -241,57 +478,87 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
   headGroup.position.set(0, 1.54, 0.02);
   bodyGroup.add(headGroup);
 
-  // Head oval with gaunt face mapped to front (+Z)
   const headGeo = new THREE.SphereGeometry(0.125, 18, 16);
-  headGeo.scale(0.86, 1.08, 0.94);
+  headGeo.scale(0.86, 1.09, 0.94);
   const headMesh = new THREE.Mesh(headGeo, skinMaterial);
   headGroup.add(headMesh);
 
-  // Front face mask curved cleanly onto front of head
-  const faceGeo = new THREE.SphereGeometry(0.127, 16, 14, -Math.PI * 0.34, Math.PI * 0.68, Math.PI * 0.2, Math.PI * 0.65);
-  faceGeo.scale(0.86, 1.08, 0.94);
-  faceGeo.rotateY(Math.PI / 2); // Align face normal to +Z
+  const faceGeo = new THREE.SphereGeometry(
+    0.1275,
+    18,
+    16,
+    -Math.PI * 0.35,
+    Math.PI * 0.7,
+    Math.PI * 0.18,
+    Math.PI * 0.68
+  );
+  faceGeo.scale(0.86, 1.09, 0.94);
+  faceGeo.rotateY(Math.PI / 2);
   const faceMesh = new THREE.Mesh(faceGeo, faceMaterial);
   headGroup.add(faceMesh);
 
-  // Long tangled cascading black hair framing face and back
+  // Tattered maroon bridal ghunghat / shroud hood partially framing crown & temples
+  const hoodGeo = new THREE.SphereGeometry(0.152, 16, 12, -Math.PI * 0.92, Math.PI * 1.84, 0, Math.PI * 0.62);
+  hoodGeo.scale(0.96, 1.06, 1.08);
+  hoodGeo.rotateY(-Math.PI / 2);
+  const hoodMesh = new THREE.Mesh(hoodGeo, veilMaterial);
+  hoodMesh.position.set(0, 0.025, -0.02);
+  headGroup.add(hoodMesh);
+
+  // Long tangled cascading black hair framing face & back with stored rest buffers for wave animation
   const hairGroup = new THREE.Group();
   headGroup.add(hairGroup);
 
-  // Crown mass
-  const crown = new THREE.Mesh(new THREE.SphereGeometry(0.142, 14, 12, 0, Math.PI * 2, 0, Math.PI * 0.64), hairMaterial);
-  crown.scale.set(0.95, 1.08, 1.06);
+  const crown = new THREE.Mesh(
+    new THREE.SphereGeometry(0.141, 14, 12, 0, Math.PI * 2, 0, Math.PI * 0.62),
+    hairMaterial
+  );
+  crown.scale.set(0.95, 1.07, 1.05);
   crown.position.set(0, 0.02, -0.015);
   hairGroup.add(crown);
 
-  // 14 messy hanging locks enveloping sides, back, and partially shadowing forehead
-  for (let i = 0; i < 14; i++) {
-    const t = i / 13;
-    const angle = -Math.PI * 0.85 + t * Math.PI * 1.7;
+  interface HairLockEntry {
+    mesh: THREE.Mesh;
+    basePos: Float32Array;
+    length: number;
+    phase: number;
+  }
+  const hairLocks: HairLockEntry[] = [];
+  for (let i = 0; i < 16; i++) {
+    const t = i / 15;
+    const angle = -Math.PI * 0.88 + t * Math.PI * 1.76;
     const isFrontSide = Math.abs(angle) > Math.PI * 0.56;
-    const lockLen = isFrontSide ? 0.52 + (i % 3) * 0.09 : 0.68 + (i % 3) * 0.08;
-    const lockW = isFrontSide ? 0.075 : 0.11;
-    const geo = new THREE.PlaneGeometry(lockW, lockLen, 2, 5);
-    const gp = geo.attributes.position;
+    const lockLen = isFrontSide ? 0.54 + (i % 3) * 0.09 : 0.72 + (i % 3) * 0.09;
+    const lockW = isFrontSide ? 0.072 : 0.105;
+    const geo = new THREE.PlaneGeometry(lockW, lockLen, 2, 6);
+    const gp = geo.attributes.position as THREE.BufferAttribute;
     for (let v = 0; v < gp.count; v++) {
       const vy = gp.getY(v);
-      gp.setZ(v, Math.sin(vy * 8 + i) * 0.025);
+      const droop = (lockLen * 0.5 - vy) / lockLen;
+      gp.setX(v, gp.getX(v) * (1 - droop * 0.42)); // Taper to fine wisps at tips
+      gp.setZ(v, Math.sin(vy * 8 + i) * 0.026 * droop);
     }
     geo.computeVertexNormals();
     const lock = new THREE.Mesh(geo, hairMaterial);
-    const rad = 0.125;
+    const rad = 0.126;
     lock.position.set(
       Math.sin(angle) * rad,
       0.06 - lockLen * 0.45,
       -Math.cos(angle) * rad
     );
     lock.rotation.y = angle + Math.PI;
-    lock.rotation.z = (Math.sin(i * 2.1) * 0.12);
+    lock.rotation.z = Math.sin(i * 2.1) * 0.12;
     hairGroup.add(lock);
+    hairLocks.push({
+      mesh: lock,
+      basePos: new Float32Array(gp.array as Float32Array),
+      length: lockLen,
+      phase: i * 0.73,
+    });
   }
 
   // Subtle dark contact shadow beneath feet
-  addContactShadow(root, textures.contactShadow, 0.42, 0.01);
+  addContactShadow(root, textures.contactShadow, 0.44, 0.01);
 
   // 5. Sacred Golden Divine Halo behind head (illuminates during Moksha finale)
   const haloMat = new THREE.MeshBasicMaterial({
@@ -307,7 +574,7 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
   shantiHalo.visible = false;
   root.add(shantiHalo);
 
-  // 6. Radiant 480-particle Golden-White Shanti Ascension System
+  // 6. Radiant 480-particle Golden-White Shanti Ascension System (soft radial glow sprites)
   const particleCount = 480;
   const pPositions = new Float32Array(particleCount * 3);
   const pVelocities = new Float32Array(particleCount * 3);
@@ -326,7 +593,8 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
   pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
   const pMat = new THREE.PointsMaterial({
     color: 0xffe8a8,
-    size: 0.095,
+    map: textures.softParticle,
+    size: 0.13,
     transparent: true,
     opacity: 0,
     blending: THREE.AdditiveBlending,
@@ -337,24 +605,26 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
   root.add(shantiParticles);
 
   const warmGold = new THREE.Color(0xffcf6e);
-  const horrorFaceEmissive = new THREE.Color(0x10181a);
+  const horrorFaceEmissive = new THREE.Color(0x0e181c);
   const blackEmissive = new THREE.Color(0x000000);
 
   const setDissolve = (t: number) => {
     const clamped = Math.max(0, Math.min(1, t));
 
     if (clamped <= 0.005) {
-      // Restore full horror appearance
       sareeMaterial.opacity = 1;
       sareeMaterial.emissive.copy(blackEmissive);
       sareeMaterial.emissiveIntensity = 0;
+      veilMaterial.opacity = 0.78;
+      veilMaterial.emissive.copy(blackEmissive);
+      veilMaterial.emissiveIntensity = 0;
       zariGoldMat.opacity = 1;
       skinMaterial.opacity = 1;
       skinMaterial.emissive.copy(blackEmissive);
       skinMaterial.emissiveIntensity = 0;
       faceMaterial.opacity = 1;
       faceMaterial.emissive.copy(horrorFaceEmissive);
-      faceMaterial.emissiveIntensity = 0.35;
+      faceMaterial.emissiveIntensity = 0.36;
       hairMaterial.opacity = 1;
       bodyGroup.visible = true;
       shantiHalo.visible = false;
@@ -364,26 +634,26 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
       return;
     }
 
-    // Phase A (0 -> 0.45): Transform from horror figure into radiant golden-white celestial light!
     const glowPhase = Math.min(1, clamped / 0.42);
     sareeMaterial.emissive.copy(warmGold);
     sareeMaterial.emissiveIntensity = glowPhase * 1.65;
+    veilMaterial.emissive.copy(warmGold);
+    veilMaterial.emissiveIntensity = glowPhase * 1.5;
     skinMaterial.emissive.copy(warmGold);
     skinMaterial.emissiveIntensity = glowPhase * 1.85;
     faceMaterial.emissive.copy(warmGold);
-    faceMaterial.emissiveIntensity = 0.35 + glowPhase * 1.75;
+    faceMaterial.emissiveIntensity = 0.36 + glowPhase * 1.75;
 
-    // Sacred Halo blooms behind her head then fades with ascension
     shantiHalo.visible = true;
     const haloScale = 0.75 + glowPhase * 0.85 + Math.max(0, clamped - 0.5) * 1.2;
     shantiHalo.scale.setScalar(haloScale);
     haloMat.opacity = Math.sin(Math.min(1, clamped) * Math.PI) * 0.82;
 
-    // Phase B (0.42 -> 0.88): Body gracefully dissolves into 480 ascending golden sparks
     const fadeStart = 0.42;
     const bodyAlpha =
       clamped < fadeStart ? 1 : Math.max(0, 1 - (clamped - fadeStart) / 0.42);
     sareeMaterial.opacity = bodyAlpha;
+    veilMaterial.opacity = bodyAlpha * 0.78;
     zariGoldMat.opacity = bodyAlpha;
     skinMaterial.opacity = bodyAlpha;
     faceMaterial.opacity = bodyAlpha;
@@ -392,6 +662,89 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
 
     shantiParticles.visible = true;
     pMat.opacity = clamped < 0.25 ? (clamped / 0.25) * 0.92 : Math.sin(Math.min(1, clamped) * Math.PI) * 1.0;
+  };
+
+  /**
+   * Zero-GC cloth & hair wave animator:
+   * - High quality: ripples saree hem, billowing trailing pallu/veil, and hair tips in vertex buffers.
+   * - Low quality: lightweight transform sway so mid-range Android WebViews stay locked at 60 FPS.
+   */
+  const updateClothWave = (elapsed: number, moveSpeed: number, highDetail: boolean) => {
+    const speedFactor = Math.min(1.6, moveSpeed * 0.28);
+    const waveFreq = 2.6 + speedFactor * 2.4;
+
+    // Subtle secondary cloth sway always active
+    trailMesh.rotation.x = 0.08 + speedFactor * 0.24 + Math.sin(elapsed * waveFreq) * 0.08;
+    backVeilMesh.rotation.x = 0.06 + speedFactor * 0.32 + Math.cos(elapsed * (waveFreq * 0.85)) * 0.07;
+
+    if (!highDetail) {
+      hairGroup.rotation.x = speedFactor * 0.14 + Math.sin(elapsed * 2.8) * 0.035;
+      hairGroup.rotation.z = Math.sin(elapsed * 3.1) * 0.055;
+      return;
+    }
+
+    // 1. Live saree hem ripple (strongest near lower tattered edge, pinned at waist/shoulders)
+    const skirtArr = sPos.array as Float32Array;
+    const ampSkirt = 0.022 + speedFactor * 0.026;
+    for (let i = 0; i < skirtBasePos.length; i += 3) {
+      const bx = skirtBasePos[i];
+      const by = skirtBasePos[i + 1];
+      const bz = skirtBasePos[i + 2];
+      const weight = Math.max(0, 1 - by / 1.05);
+      if (weight <= 0.01) continue;
+      const w2 = weight * weight;
+      const wave =
+        Math.sin(elapsed * waveFreq + bx * 7.5 + bz * 6.5) * ampSkirt +
+        Math.cos(elapsed * (waveFreq * 1.45) - by * 5.2 + bz * 5.0) * (ampSkirt * 0.45);
+      skirtArr[i] = bx + wave * w2;
+      skirtArr[i + 2] = bz - speedFactor * 0.07 * w2 + wave * 0.75 * w2;
+    }
+    sPos.needsUpdate = true;
+
+    // 2. Trailing pallu cloth flutter
+    const trailArr = tPos.array as Float32Array;
+    const ampTrail = 0.036 + speedFactor * 0.038;
+    for (let i = 0; i < trailBasePos.length; i += 3) {
+      const bx = trailBasePos[i];
+      const by = trailBasePos[i + 1];
+      const bz = trailBasePos[i + 2];
+      const droop = Math.max(0, (0.46 - by) / 0.92);
+      const flutter = Math.sin(elapsed * (waveFreq + 1.4) - droop * 5.5 + bx * 4) * ampTrail * droop;
+      trailArr[i] = bx + flutter * 0.45;
+      trailArr[i + 2] = bz + flutter - speedFactor * 0.09 * droop;
+    }
+    tPos.needsUpdate = true;
+
+    // 3. Translucent rear bridal shroud billow
+    const bvArr = bvPos.array as Float32Array;
+    for (let i = 0; i < backVeilBasePos.length; i += 3) {
+      const bx = backVeilBasePos[i];
+      const by = backVeilBasePos[i + 1];
+      const bz = backVeilBasePos[i + 2];
+      const droop = Math.max(0, (0.56 - by) / 1.12);
+      const billow = Math.sin(elapsed * (waveFreq + 0.8) - droop * 4.8 + bx * 5.0) * (0.04 + speedFactor * 0.04) * droop;
+      bvArr[i + 2] = bz + billow - speedFactor * 0.14 * droop;
+    }
+    bvPos.needsUpdate = true;
+
+    // 4. Flowing dark hair strand tips swaying
+    const ampHair = 0.018 + speedFactor * 0.022;
+    for (let h = 0; h < hairLocks.length; h++) {
+      const entry = hairLocks[h];
+      const attr = entry.mesh.geometry.attributes.position as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      const base = entry.basePos;
+      const halfLen = entry.length * 0.5;
+      for (let i = 0; i < base.length; i += 3) {
+        const by = base[i + 1];
+        const droop = Math.max(0, (halfLen - by) / entry.length);
+        if (droop < 0.12) continue;
+        const sway = Math.sin(elapsed * (waveFreq + 1.8) + entry.phase - droop * 4.5) * ampHair * droop * droop;
+        arr[i] = base[i] + sway * 0.5;
+        arr[i + 2] = base[i + 2] + sway;
+      }
+      attr.needsUpdate = true;
+    }
   };
 
   return {
@@ -409,6 +762,7 @@ export function createGhostModel(textures: ProceduralTexturePack): GhostRig {
     shantiParticles,
     shantiVelocities: pVelocities,
     setDissolve,
+    updateClothWave,
   };
 }
 
@@ -422,9 +776,13 @@ export function createRitualItemModel(
   const group = new THREE.Group();
 
   const brassMat = new THREE.MeshStandardMaterial({
-    color: 0xb99142,
-    roughness: 0.28,
-    metalness: 0.86,
+    map: textures.brassColor,
+    bumpMap: textures.brassBump,
+    bumpScale: 0.018,
+    roughnessMap: textures.brassRoughness,
+    color: 0xc89e4b,
+    roughness: 0.34,
+    metalness: 0.88,
   });
 
   let flameMesh: THREE.Mesh | undefined;
@@ -609,7 +967,8 @@ export function createHavanKund(textures: ProceduralTexturePack): HavanKundRig {
   const stoneMat = new THREE.MeshStandardMaterial({
     map: textures.stoneColor,
     bumpMap: textures.stoneBump,
-    bumpScale: 0.04,
+    bumpScale: 0.046,
+    roughnessMap: textures.stoneRoughness,
     roughness: 0.88,
     metalness: 0.06,
     color: 0x776f65,
@@ -775,6 +1134,7 @@ export function createHavanKund(textures: ProceduralTexturePack): HavanKundRig {
   // Warm central fire point light (starts as soft diya glow, intensifies massively in climax/ending)
   const fireLight = new THREE.PointLight(0xff9234, 2.2, 11, 1.7);
   fireLight.position.set(0, 1.05, 0);
+  fireLight.castShadow = false;
   root.add(fireLight);
 
   // Dual-Layer Towering Heavenly Moksha Pillar of Light (Core + Volumetric Outer Beam)
@@ -844,7 +1204,8 @@ export function createHavanKund(textures: ProceduralTexturePack): HavanKundRig {
   vortexGeo.setAttribute('position', new THREE.BufferAttribute(vortexPositions, 3));
   const vortexMat = new THREE.PointsMaterial({
     color: 0xffc65c,
-    size: 0.11,
+    map: textures.softParticle,
+    size: 0.14,
     transparent: true,
     opacity: 0,
     blending: THREE.AdditiveBlending,
@@ -966,52 +1327,37 @@ export function createAlmirah(
   root.position.copy(pos);
   root.rotation.y = facingYaw;
 
-  const woodMat = new THREE.MeshStandardMaterial({
-    map: textures.woodColor,
-    bumpMap: textures.woodBump,
-    bumpScale: 0.03,
-    roughness: 0.78,
-    metalness: 0.06,
-  });
-
-  const trimMat = new THREE.MeshStandardMaterial({
-    color: 0x24160e,
-    roughness: 0.65,
-    metalness: 0.12,
-  });
-
-  const brassMat = new THREE.MeshStandardMaterial({
-    color: 0xaa853c,
-    roughness: 0.3,
-    metalness: 0.85,
-  });
+  const shared = getSharedPropAssets(textures);
+  const woodMat = shared.woodMat;
+  const trimMat = shared.woodTrimMat;
+  const brassMat = shared.brassMat;
 
   const w = 1.28;
   const h = 2.28;
   const d = 0.96;
 
   // Back, left, right, top, bottom panels leaving front interior hollow
-  const back = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.08), woodMat);
+  const back = new THREE.Mesh(shared.almBackGeo, woodMat);
   back.position.set(0, h / 2, -d / 2 + 0.04);
   back.castShadow = true;
   back.receiveShadow = true;
   root.add(back);
 
-  const leftSide = new THREE.Mesh(new THREE.BoxGeometry(0.08, h, d), woodMat);
+  const leftSide = new THREE.Mesh(shared.almSideGeo, woodMat);
   leftSide.position.set(-w / 2 + 0.04, h / 2, 0);
   leftSide.castShadow = true;
   root.add(leftSide);
 
-  const rightSide = new THREE.Mesh(new THREE.BoxGeometry(0.08, h, d), woodMat);
+  const rightSide = new THREE.Mesh(shared.almSideGeo, woodMat);
   rightSide.position.set(w / 2 - 0.04, h / 2, 0);
   rightSide.castShadow = true;
   root.add(rightSide);
 
-  const topCrown = new THREE.Mesh(new THREE.BoxGeometry(w + 0.14, 0.14, d + 0.12), trimMat);
+  const topCrown = new THREE.Mesh(shared.almCrownGeo, trimMat);
   topCrown.position.set(0, h + 0.04, 0.02);
   root.add(topCrown);
 
-  const basePlinth = new THREE.Mesh(new THREE.BoxGeometry(w + 0.06, 0.12, d + 0.04), trimMat);
+  const basePlinth = new THREE.Mesh(shared.almPlinthGeo, trimMat);
   basePlinth.position.set(0, 0.06, 0);
   root.add(basePlinth);
 
@@ -1024,35 +1370,31 @@ export function createAlmirah(
     pivot.position.set(isLeft ? -w / 2 + 0.08 : w / 2 - 0.08, 0.12, d / 2 - 0.04);
     const xOff = isLeft ? doorW / 2 : -doorW / 2;
 
-    // Lower solid door panel
-    const lower = new THREE.Mesh(new THREE.BoxGeometry(doorW - 0.015, doorH * 0.62, 0.05), woodMat);
+    const lower = new THREE.Mesh(shared.almLowerDoorGeo, woodMat);
     lower.position.set(xOff, doorH * 0.31, 0);
     lower.castShadow = true;
     pivot.add(lower);
 
-    // Upper side stiles flanking eye-level peek louver slats
-    const leftStile = new THREE.Mesh(new THREE.BoxGeometry(0.07, doorH * 0.38, 0.05), trimMat);
+    const leftStile = new THREE.Mesh(shared.almStileGeo, trimMat);
     leftStile.position.set(xOff - doorW / 2 + 0.035, doorH * 0.81, 0);
     pivot.add(leftStile);
 
-    const rightStile = new THREE.Mesh(new THREE.BoxGeometry(0.07, doorH * 0.38, 0.05), trimMat);
+    const rightStile = new THREE.Mesh(shared.almStileGeo, trimMat);
     rightStile.position.set(xOff + doorW / 2 - 0.035, doorH * 0.81, 0);
     pivot.add(rightStile);
 
-    const topRail = new THREE.Mesh(new THREE.BoxGeometry(doorW, 0.09, 0.05), trimMat);
+    const topRail = new THREE.Mesh(shared.almTopRailGeo, trimMat);
     topRail.position.set(xOff, doorH - 0.045, 0);
     pivot.add(topRail);
 
-    // Horizontal spaced louver slats so player can see outside while hiding
     for (let s = 0; s < 5; s++) {
-      const slat = new THREE.Mesh(new THREE.BoxGeometry(doorW - 0.12, 0.04, 0.04), woodMat);
+      const slat = new THREE.Mesh(shared.almSlatGeo, woodMat);
       slat.position.set(xOff, doorH * 0.65 + s * 0.12, 0);
       slat.rotation.x = 0.25;
       pivot.add(slat);
     }
 
-    // Antique brass handle
-    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 8), brassMat);
+    const handle = new THREE.Mesh(shared.almHandleGeo, brassMat);
     handle.position.set(isLeft ? doorW - 0.065 : -doorW + 0.065, doorH * 0.5, 0.045);
     pivot.add(handle);
 
@@ -1079,53 +1421,146 @@ export function createAlmirah(
     exitPos,
     facingYaw,
     doorOpenAmount: 0,
+    doorSwingBoost: 0,
   };
 }
 
 /**
- * First-person handheld heavy vintage metal flashlight held on bottom-right (matching Reference 1).
+ * Multi-part 1980s vintage Indian metal flashlight held on lower-right:
+ * knurled metal grip, weathered brass tail-cap & locking collar, slide power switch,
+ * fluted flared reflector head, chrome parabolic dish, glowing tungsten filament bulb,
+ * dual-layer warm volumetric cone, localized beam dust motes, and Holy Ward Spark Bash VFX.
  */
-export function createFlashlightViewModel(): FlashlightRig {
+export function createFlashlightViewModel(textures: ProceduralTexturePack): FlashlightRig {
   const viewGroup = new THREE.Group();
 
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0x1a1e22,
-    roughness: 0.42,
-    metalness: 0.78,
-  });
-  const gripMat = new THREE.MeshStandardMaterial({
-    color: 0x0e1012,
-    roughness: 0.88,
-    metalness: 0.2,
-  });
-  const lensMat = new THREE.MeshStandardMaterial({
-    color: 0xfff4d8,
-    emissive: 0xddeeff,
-    emissiveIntensity: 1.5,
-    roughness: 0.15,
-    metalness: 0.1,
+  const knurledBodyMat = new THREE.MeshStandardMaterial({
+    map: textures.torchGripColor,
+    bumpMap: textures.torchGripBump,
+    bumpScale: 0.018,
+    roughnessMap: textures.torchGripRoughness,
+    color: 0x8e959c,
+    roughness: 0.44,
+    metalness: 0.84,
   });
 
-  // Main barrel
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.03, 0.28, 14), bodyMat);
+  const headMetalMat = new THREE.MeshStandardMaterial({
+    map: textures.ironColor,
+    bumpMap: textures.ironBump,
+    bumpScale: 0.01,
+    roughnessMap: textures.ironRoughness,
+    color: 0x5c6268,
+    roughness: 0.36,
+    metalness: 0.88,
+  });
+
+  const brassAccentMat = new THREE.MeshStandardMaterial({
+    map: textures.brassColor,
+    bumpMap: textures.brassBump,
+    bumpScale: 0.012,
+    roughnessMap: textures.brassRoughness,
+    color: 0xc29a49,
+    roughness: 0.36,
+    metalness: 0.88,
+  });
+
+  const reflectorMat = new THREE.MeshStandardMaterial({
+    color: 0xe6eef2,
+    roughness: 0.12,
+    metalness: 0.96,
+    side: THREE.DoubleSide,
+  });
+
+  const bulbMat = new THREE.MeshBasicMaterial({
+    color: 0xfff4d4,
+  });
+
+  const lensMat = new THREE.MeshStandardMaterial({
+    color: 0xfff1cf,
+    emissive: 0xffd58a,
+    emissiveIntensity: 1.45,
+    roughness: 0.1,
+    metalness: 0.08,
+    transparent: true,
+    opacity: 0.62,
+  });
+
+  // 1. Corrugated knurled cylindrical metal barrel
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.029, 0.25, 18), knurledBodyMat);
   barrel.rotation.x = Math.PI / 2;
+  barrel.position.z = 0.015;
   viewGroup.add(barrel);
 
-  // Rubber knurled grip sleeve
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.033, 0.12, 14), gripMat);
-  grip.rotation.x = Math.PI / 2;
-  grip.position.z = 0.04;
-  viewGroup.add(grip);
+  // 2. Weathered brass rear tail-cap & hanging D-ring
+  const tailCap = new THREE.Mesh(new THREE.CylinderGeometry(0.0315, 0.03, 0.036, 16), brassAccentMat);
+  tailCap.rotation.x = Math.PI / 2;
+  tailCap.position.z = 0.15;
+  viewGroup.add(tailCap);
 
-  // Flared lamp head bezel
-  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.034, 0.075, 16), bodyMat);
-  head.rotation.x = Math.PI / 2;
-  head.position.z = -0.16;
+  const lanyardRing = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.0028, 6, 14), brassAccentMat);
+  lanyardRing.position.set(0, -0.008, 0.174);
+  lanyardRing.rotation.x = 0.35;
+  viewGroup.add(lanyardRing);
+
+  // 3. Brass locking collar rings & top thumb-slide power switch housing
+  const collarRear = new THREE.Mesh(new THREE.CylinderGeometry(0.0335, 0.0335, 0.014, 16), brassAccentMat);
+  collarRear.rotation.x = Math.PI / 2;
+  collarRear.position.z = 0.115;
+  viewGroup.add(collarRear);
+
+  const collarFront = new THREE.Mesh(new THREE.CylinderGeometry(0.0345, 0.033, 0.016, 16), brassAccentMat);
+  collarFront.rotation.x = Math.PI / 2;
+  collarFront.position.z = -0.105;
+  viewGroup.add(collarFront);
+
+  const switchTrack = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.01, 0.056), headMetalMat);
+  switchTrack.position.set(0, 0.033, -0.055);
+  viewGroup.add(switchTrack);
+
+  const switchNub = new THREE.Mesh(new THREE.BoxGeometry(0.013, 0.009, 0.02), brassAccentMat);
+  switchNub.position.set(0, 0.039, -0.065);
+  viewGroup.add(switchNub);
+
+  // 4. Lathe-turned flared vintage reflector head (Eveready stepped bell silhouette)
+  const headProfile = [
+    new THREE.Vector2(0.031, 0.0),
+    new THREE.Vector2(0.036, 0.016),
+    new THREE.Vector2(0.052, 0.058),
+    new THREE.Vector2(0.058, 0.072),
+    new THREE.Vector2(0.058, 0.088),
+    new THREE.Vector2(0.052, 0.092),
+  ];
+  const headGeo = new THREE.LatheGeometry(headProfile, 20);
+  headGeo.rotateX(-Math.PI / 2);
+  const head = new THREE.Mesh(headGeo, headMetalMat);
+  head.position.z = -0.11;
   viewGroup.add(head);
 
-  // Glowing lens cap
-  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.046, 14), lensMat);
-  lens.position.z = -0.198;
+  // Brass bezel ring around front lens rim
+  const frontBezel = new THREE.Mesh(new THREE.TorusGeometry(0.0545, 0.0045, 8, 20), brassAccentMat);
+  frontBezel.position.z = -0.201;
+  viewGroup.add(frontBezel);
+
+  // 5. Recessed parabolic metallic reflector dish + glowing tungsten bulb
+  const dishProfile = [
+    new THREE.Vector2(0.006, 0.0),
+    new THREE.Vector2(0.022, 0.012),
+    new THREE.Vector2(0.04, 0.034),
+    new THREE.Vector2(0.05, 0.054),
+  ];
+  const dishGeo = new THREE.LatheGeometry(dishProfile, 18);
+  dishGeo.rotateX(-Math.PI / 2);
+  const dish = new THREE.Mesh(dishGeo, reflectorMat);
+  dish.position.z = -0.145;
+  viewGroup.add(dish);
+
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), bulbMat);
+  bulb.position.z = -0.162;
+  viewGroup.add(bulb);
+
+  // Protective warm glass lens cap
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.051, 18), lensMat);
+  lens.position.z = -0.2;
   lens.rotation.y = Math.PI;
   viewGroup.add(lens);
 
@@ -1133,37 +1568,166 @@ export function createFlashlightViewModel(): FlashlightRig {
   viewGroup.position.set(0.28, -0.22, -0.44);
   viewGroup.rotation.set(0.06, -0.09, 0.05);
 
-  // Volumetric-look subtle dust beam cone emerging from lens
-  const beamGeo = new THREE.ConeGeometry(0.85, 5.2, 16, 1, true);
-  beamGeo.translate(0, -2.6, 0);
-  beamGeo.rotateX(Math.PI / 2);
-  const beamMat = new THREE.MeshBasicMaterial({
-    color: 0xcbe8f0,
+  // 6. Dual-layer warm tungsten volumetric translucent beam cone
+  const outerBeamGeo = new THREE.ConeGeometry(0.96, 5.8, 18, 1, true);
+  outerBeamGeo.translate(0, -2.9, 0);
+  outerBeamGeo.rotateX(Math.PI / 2);
+  const outerBeamMat = new THREE.MeshBasicMaterial({
+    color: 0xffdfa2,
     transparent: true,
-    opacity: 0.055,
+    opacity: 0.048,
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
-  const beamMesh = new THREE.Mesh(beamGeo, beamMat);
-  beamMesh.position.set(0, 0, -0.22);
+  const beamMesh = new THREE.Mesh(outerBeamGeo, outerBeamMat);
+  beamMesh.position.set(0, 0, -0.21);
   viewGroup.add(beamMesh);
 
-  // Real directional SpotLight attached to camera space
-  const spotLight = new THREE.SpotLight(0xd9f0f7, 7.5, 22, Math.PI / 4.8, 0.52, 1.55);
+  const innerBeamGeo = new THREE.ConeGeometry(0.42, 3.8, 14, 1, true);
+  innerBeamGeo.translate(0, -1.9, 0);
+  innerBeamGeo.rotateX(Math.PI / 2);
+  const innerBeamMat = new THREE.MeshBasicMaterial({
+    color: 0xfff0cc,
+    transparent: true,
+    opacity: 0.065,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const innerBeamMesh = new THREE.Mesh(innerBeamGeo, innerBeamMat);
+  innerBeamMesh.position.set(0, 0, -0.21);
+  viewGroup.add(innerBeamMesh);
+
+  // 7. Floating dust motes visible directly inside the warm flashlight cone (zero GC)
+  const beamDustCount = 46;
+  const bdPositions = new Float32Array(beamDustCount * 3);
+  const bdSeeds = new Float32Array(beamDustCount * 3);
+  for (let i = 0; i < beamDustCount; i++) {
+    const zDist = 0.55 + Math.random() * 4.4;
+    const coneRad = 0.08 + (zDist / 5.2) * 0.72;
+    const ang = Math.random() * Math.PI * 2;
+    const rad = Math.sqrt(Math.random()) * coneRad;
+    bdPositions[i * 3] = Math.cos(ang) * rad;
+    bdPositions[i * 3 + 1] = Math.sin(ang) * rad;
+    bdPositions[i * 3 + 2] = -0.22 - zDist;
+
+    bdSeeds[i * 3] = Math.random() * Math.PI * 2;
+    bdSeeds[i * 3 + 1] = 0.06 + Math.random() * 0.1;
+    bdSeeds[i * 3 + 2] = 0.25 + Math.random() * 0.6;
+  }
+  const bdGeo = new THREE.BufferGeometry();
+  bdGeo.setAttribute('position', new THREE.BufferAttribute(bdPositions, 3));
+  const bdMat = new THREE.PointsMaterial({
+    color: 0xffe8bd,
+    map: textures.softParticle,
+    size: 0.052,
+    transparent: true,
+    opacity: 0.48,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const beamDustPoints = new THREE.Points(bdGeo, bdMat);
+  beamDustPoints.frustumCulled = false;
+  viewGroup.add(beamDustPoints);
+
+  const updateBeamDust = (dt: number, elapsed: number, highDetail: boolean) => {
+    const activeCount = highDetail ? beamDustCount : 18;
+    bdGeo.setDrawRange(0, activeCount);
+    if (!beamDustPoints.visible) return;
+    const posAttr = bdGeo.attributes.position as THREE.BufferAttribute;
+    const arr = posAttr.array as Float32Array;
+    for (let i = 0; i < activeCount; i++) {
+      const i3 = i * 3;
+      const phase = bdSeeds[i3];
+      const rise = bdSeeds[i3 + 1];
+      const sway = bdSeeds[i3 + 2];
+      arr[i3] += Math.sin(elapsed * sway + phase) * dt * 0.045;
+      arr[i3 + 1] += rise * dt * 0.38;
+      const zAbs = Math.max(0.4, -arr[i3 + 2] - 0.22);
+      const maxR = 0.08 + (zAbs / 5.2) * 0.72;
+      if (arr[i3 + 1] > maxR) {
+        arr[i3 + 1] = -maxR * 0.85;
+      }
+      if (Math.abs(arr[i3]) > maxR) {
+        arr[i3] *= -0.75;
+      }
+    }
+    posAttr.needsUpdate = true;
+  };
+
+  // 8. Golden Holy Ward Spark burst rig attached near bezel (preserved intact for Torch Bash)
+  const sparkGroup = new THREE.Group();
+  sparkGroup.position.set(0, 0, -0.22);
+  sparkGroup.visible = false;
+  viewGroup.add(sparkGroup);
+
+  const sparkCoreMat = new THREE.MeshBasicMaterial({
+    color: 0xffe494,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const sparkCoreMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.085, 0), sparkCoreMat);
+  sparkGroup.add(sparkCoreMesh);
+
+  const sparkRayGeo = new THREE.BoxGeometry(0.014, 0.014, 0.14);
+  const sparkRayMat = new THREE.MeshBasicMaterial({
+    color: 0xffc14a,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const sparkRays: Array<{ mesh: THREE.Mesh; dir: THREE.Vector3 }> = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const tilt = i % 2 === 0 ? 0.28 : -0.28;
+    const dir = new THREE.Vector3(Math.cos(angle), Math.sin(angle), -0.55 + tilt).normalize();
+    const mesh = new THREE.Mesh(sparkRayGeo, sparkRayMat);
+    mesh.lookAt(dir);
+    sparkGroup.add(mesh);
+    sparkRays.push({ mesh, dir });
+  }
+
+  const sparkLight = new THREE.PointLight(0xffcb5c, 0, 6.2, 1.8);
+  sparkLight.position.set(0, 0.04, -0.35);
+  sparkLight.castShadow = false;
+  viewGroup.add(sparkLight);
+
+  // 9. Warm tungsten directional SpotLight contrasting against cold moonlit teal haze
+  const spotLight = new THREE.SpotLight(0xffe0a8, 8.6, 24, Math.PI / 4.7, 0.58, 1.48);
   spotLight.position.set(0.18, -0.14, -0.25);
   spotLight.target.position.set(0, -0.05, -6);
+  spotLight.castShadow = false;
+  spotLight.shadow.mapSize.width = 512;
+  spotLight.shadow.mapSize.height = 512;
+  spotLight.shadow.camera.near = 0.25;
+  spotLight.shadow.camera.far = 22;
+  spotLight.shadow.bias = -0.001;
 
   return {
     viewGroup,
     spotLight,
     beamMesh,
+    innerBeamMesh,
+    beamDustPoints,
     lensMat,
+    bulbMat,
+    switchNub,
+    sparkGroup,
+    sparkCoreMesh,
+    sparkCoreMat,
+    sparkRays,
+    sparkRayMat,
+    sparkLight,
+    updateBeamDust,
   };
 }
 
 /**
- * Carved North Indian haveli wooden pillar with hanging antique brass bell (matching Reference 1).
+ * Carved North Indian haveli wooden pillar with hanging antique brass bell (reuses shared geometries/materials).
  */
 export function createCarvedPillarWithBell(
   height: number,
@@ -1171,63 +1735,41 @@ export function createCarvedPillarWithBell(
   withBell = true
 ): THREE.Group {
   const group = new THREE.Group();
+  const shared = getSharedPropAssets(textures);
 
-  const woodMat = new THREE.MeshStandardMaterial({
-    map: textures.woodColor,
-    bumpMap: textures.woodBump,
-    bumpScale: 0.04,
-    roughness: 0.82,
-    metalness: 0.06,
-  });
-
-  const stoneBaseMat = new THREE.MeshStandardMaterial({
-    map: textures.stoneColor,
-    roughness: 0.9,
-    metalness: 0.05,
-  });
-
-  // Stone plinth base
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.34, 0.46), stoneBaseMat);
+  const plinth = new THREE.Mesh(shared.pillarPlinthGeo, shared.stoneBaseMat);
   plinth.position.y = 0.17;
   plinth.receiveShadow = true;
   group.add(plinth);
 
-  // Carved octagonal wooden shaft
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, height - 0.72, 8), woodMat);
+  const shaftKey = `shaft_${height.toFixed(2)}`;
+  let shaftGeo = shared.cylCache.get(shaftKey);
+  if (!shaftGeo) {
+    shaftGeo = new THREE.CylinderGeometry(0.15, 0.17, height - 0.72, 8);
+    shared.cylCache.set(shaftKey, shaftGeo);
+  }
+  const shaft = new THREE.Mesh(shaftGeo, shared.woodMat);
   shaft.position.y = 0.34 + (height - 0.72) / 2;
   shaft.castShadow = true;
   shaft.receiveShadow = true;
   group.add(shaft);
 
-  // Ornamental carved collar rings
   [0.55, height - 0.75].forEach((ry) => {
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.11, 8), woodMat);
+    const ring = new THREE.Mesh(shared.pillarCollarGeo, shared.woodMat);
     ring.position.y = ry;
     group.add(ring);
   });
 
-  // Wide bracket capital at top
-  const capital = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.28, 0.56), woodMat);
+  const capital = new THREE.Mesh(shared.pillarCapitalGeo, shared.woodMat);
   capital.position.y = height - 0.22;
   group.add(capital);
 
   if (withBell) {
-    const brassMat = new THREE.MeshStandardMaterial({
-      color: 0x9b7a3c,
-      roughness: 0.38,
-      metalness: 0.82,
-    });
-    const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.42, 6), brassMat);
+    const chain = new THREE.Mesh(shared.pillarChainGeo, shared.brassMat);
     chain.position.set(0.32, height - 0.54, 0);
     group.add(chain);
 
-    const bellPts = [
-      new THREE.Vector2(0.0, 0.18),
-      new THREE.Vector2(0.045, 0.16),
-      new THREE.Vector2(0.065, 0.08),
-      new THREE.Vector2(0.11, 0.0),
-    ];
-    const bell = new THREE.Mesh(new THREE.LatheGeometry(bellPts, 12), brassMat);
+    const bell = new THREE.Mesh(shared.pillarBellGeo, shared.brassMat);
     bell.position.set(0.32, height - 0.92, 0);
     group.add(bell);
   }
@@ -1236,25 +1778,25 @@ export function createCarvedPillarWithBell(
 }
 
 /**
- * Vintage weathered wooden table for ritual items & lore notes (matching Reference 2).
+ * Vintage weathered wooden table for ritual items & lore notes (reuses shared geometries/materials).
  */
 export function createWoodenTable(textures: ProceduralTexturePack, width = 1.25, depth = 0.78): THREE.Group {
   const group = new THREE.Group();
-  const woodMat = new THREE.MeshStandardMaterial({
-    map: textures.woodColor,
-    bumpMap: textures.woodBump,
-    bumpScale: 0.03,
-    roughness: 0.82,
-    metalness: 0.05,
-  });
+  const shared = getSharedPropAssets(textures);
 
-  const top = new THREE.Mesh(new THREE.BoxGeometry(width, 0.07, depth), woodMat);
+  const topKey = `top_${width.toFixed(2)}_${depth.toFixed(2)}`;
+  let topGeo = shared.boxCache.get(topKey);
+  if (!topGeo) {
+    topGeo = new THREE.BoxGeometry(width, 0.07, depth);
+    shared.boxCache.set(topKey, topGeo);
+  }
+
+  const top = new THREE.Mesh(topGeo, shared.woodMat);
   top.position.y = 0.78;
   top.castShadow = true;
   top.receiveShadow = true;
   group.add(top);
 
-  const legGeo = new THREE.BoxGeometry(0.075, 0.76, 0.075);
   const lx = width / 2 - 0.09;
   const lz = depth / 2 - 0.09;
   [
@@ -1263,7 +1805,7 @@ export function createWoodenTable(textures: ProceduralTexturePack, width = 1.25,
     [-lx, lz],
     [lx, lz],
   ].forEach(([x, z]) => {
-    const leg = new THREE.Mesh(legGeo, woodMat);
+    const leg = new THREE.Mesh(shared.tableLegGeo, shared.woodMat);
     leg.position.set(x, 0.38, z);
     leg.castShadow = true;
     group.add(leg);
@@ -1274,55 +1816,225 @@ export function createWoodenTable(textures: ProceduralTexturePack, width = 1.25,
 }
 
 /**
- * Barred iron window with angled cold teal moonlight shaft (matching Reference 3).
+ * Barred iron window with angled cold teal moonlight shaft (reuses shared geometries/materials).
  */
 export function createMoonlightWindow(textures: ProceduralTexturePack): THREE.Group {
   const group = new THREE.Group();
+  const shared = getSharedPropAssets(textures);
 
-  // Moonlit glowing frosted night backing
-  const moonGlass = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.5, 1.9),
-    new THREE.MeshBasicMaterial({ color: 0x3f717a })
-  );
+  const moonGlass = new THREE.Mesh(shared.winGlassGeo, shared.windowGlassMat);
   group.add(moonGlass);
 
-  // Rusted iron window grill overlay
-  const grill = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.54, 1.94),
-    new THREE.MeshStandardMaterial({
-      map: textures.grillColor,
-      alphaMap: textures.grillAlpha,
-      transparent: true,
-      alphaTest: 0.45,
-      roughness: 0.8,
-      metalness: 0.55,
-    })
-  );
+  const grill = new THREE.Mesh(shared.winGrillGeo, shared.windowGrillMat);
   grill.position.z = 0.04;
   group.add(grill);
 
-  // Wooden window frame border
-  const frameMat = new THREE.MeshStandardMaterial({ map: textures.woodColor, roughness: 0.86 });
-  const topB = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 0.16), frameMat);
+  const topB = new THREE.Mesh(shared.winTopGeo, shared.windowFrameMat);
   topB.position.set(0, 0.98, 0.05);
-  const botB = new THREE.Mesh(new THREE.BoxGeometry(1.74, 0.14, 0.22), frameMat);
+  const botB = new THREE.Mesh(shared.winBotGeo, shared.windowFrameMat);
   botB.position.set(0, -0.98, 0.06);
   group.add(topB, botB);
 
-  // Translucent angled volumetric moonlight shaft
-  const shaftGeo = new THREE.PlaneGeometry(1.55, 4.4);
-  const shaftMat = new THREE.MeshBasicMaterial({
-    color: 0x6ea6b0,
-    transparent: true,
-    opacity: 0.085,
-    side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
-  const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+  const shaft = new THREE.Mesh(shared.winShaftGeo, shared.windowShaftMat);
   shaft.position.set(0, -0.85, 1.65);
   shaft.rotation.x = -0.95;
   group.add(shaft);
 
   return group;
 }
+
+/**
+ * Articulated carved-teak Haveli double-leaf wing door with iron strap hinges,
+ * weathered brass knockers, and dynamic closed-state collision bounds.
+ */
+export function createHingedHaveliDoor(
+  id: string,
+  roomName: string,
+  pos: THREE.Vector3,
+  openingWidth: number,
+  rotY: number,
+  textures: ProceduralTexturePack,
+  initiallyOpen = false
+): HingedDoorRig {
+  const root = new THREE.Group();
+  root.position.copy(pos);
+  root.rotation.y = rotY;
+
+  const shared = getSharedPropAssets(textures);
+  const doorH = 2.84;
+  const clearSpan = Math.min(2.44, openingWidth - 0.52);
+  const jambW = (openingWidth - clearSpan) * 0.5;
+  const leafW = clearSpan * 0.5 - 0.015;
+
+  // Carved wooden doorway side pilasters framing the archway cleanly
+  if (jambW > 0.08) {
+    const jambGeo = new THREE.BoxGeometry(jambW, doorH + 0.08, 0.36);
+    [-1, 1].forEach((side) => {
+      const jamb = new THREE.Mesh(jambGeo, shared.woodTrimMat);
+      jamb.position.set(side * (clearSpan * 0.5 + jambW * 0.5), (doorH + 0.08) * 0.5, 0);
+      jamb.receiveShadow = true;
+      root.add(jamb);
+    });
+  }
+
+  // Carved threshold lintel bar at top
+  const headerBar = new THREE.Mesh(new THREE.BoxGeometry(clearSpan + 0.24, 0.14, 0.4), shared.woodTrimMat);
+  headerBar.position.set(0, doorH + 0.06, 0);
+  root.add(headerBar);
+
+  const leafGeo = new THREE.BoxGeometry(leafW, doorH, 0.09);
+  const trimRailGeo = new THREE.BoxGeometry(leafW - 0.14, 0.085, 0.115);
+  const recessedPanelGeo = new THREE.BoxGeometry(leafW - 0.26, 0.86, 0.108);
+  const strapHingeGeo = new THREE.BoxGeometry(0.42, 0.065, 0.118);
+  const knockerRingGeo = new THREE.TorusGeometry(0.065, 0.014, 6, 14);
+  const knockerPlateGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.125, 10);
+
+  const buildLeaf = (isLeft: boolean): THREE.Group => {
+    const pivot = new THREE.Group();
+    pivot.position.set(isLeft ? -clearSpan * 0.5 : clearSpan * 0.5, 0, 0);
+    const dir = isLeft ? 1 : -1;
+    const xCenter = dir * (leafW * 0.5);
+
+    const panel = new THREE.Mesh(leafGeo, shared.woodMat);
+    panel.position.set(xCenter, doorH * 0.5, 0);
+    panel.castShadow = true;
+    panel.receiveShadow = true;
+    pivot.add(panel);
+
+    // Carved cross rails & recessed Indian panel framing
+    [0.14, 1.32, doorH - 0.14].forEach((ry) => {
+      const rail = new THREE.Mesh(trimRailGeo, shared.woodTrimMat);
+      rail.position.set(xCenter, ry, 0);
+      pivot.add(rail);
+    });
+
+    [0.74, 2.04].forEach((py) => {
+      const inset = new THREE.Mesh(recessedPanelGeo, shared.woodTrimMat);
+      inset.position.set(xCenter, py, 0);
+      pivot.add(inset);
+    });
+
+    // Rusted wrought-iron strap hinges along outer edge
+    [0.52, 2.24].forEach((hy) => {
+      const strap = new THREE.Mesh(strapHingeGeo, shared.ironMat);
+      strap.position.set(dir * 0.22, hy, 0);
+      pivot.add(strap);
+    });
+
+    // Weathered brass circular door-knocker & plate on both sides
+    const innerEdgeX = dir * (leafW - 0.18);
+    const plate = new THREE.Mesh(knockerPlateGeo, shared.brassMat);
+    plate.rotation.x = Math.PI / 2;
+    plate.position.set(innerEdgeX, 1.32, 0);
+    pivot.add(plate);
+
+    [-0.075, 0.075].forEach((kz) => {
+      const ring = new THREE.Mesh(knockerRingGeo, shared.brassMat);
+      ring.position.set(innerEdgeX, 1.24, kz);
+      pivot.add(ring);
+    });
+
+    return pivot;
+  };
+
+  const leftPivot = buildLeaf(true);
+  const rightPivot = buildLeaf(false);
+  root.add(leftPivot, rightPivot);
+
+  const openAmount = initiallyOpen ? 1 : 0;
+  const maxSwing = 1.56;
+  leftPivot.rotation.y = openAmount * maxSwing;
+  rightPivot.rotation.y = -openAmount * maxSwing;
+
+  // Axis-aligned closed blocker box in world coordinates
+  const rotated90 = Math.abs(Math.sin(rotY)) > 0.7;
+  const halfW = rotated90 ? 0.22 : openingWidth * 0.48;
+  const halfD = rotated90 ? openingWidth * 0.48 : 0.22;
+
+  return {
+    id,
+    roomName,
+    root,
+    leftPivot,
+    rightPivot,
+    interactPos: pos.clone(),
+    isOpen: initiallyOpen,
+    openAmount,
+    ghostPushCooldown: 0,
+    closedBox: {
+      minX: pos.x - halfW,
+      maxX: pos.x + halfW,
+      minZ: pos.z - halfD,
+      maxZ: pos.z + halfD,
+    },
+  };
+}
+
+/**
+ * Heavy 1984 rusted wrought-iron barred main entrance gate with brass lock & chain.
+ */
+export function createRustedIronGate(textures: ProceduralTexturePack): THREE.Group {
+  const group = new THREE.Group();
+  const shared = getSharedPropAssets(textures);
+
+  const gateW = 2.85;
+  const gateH = 3.05;
+
+  // Flanking weathered sandstone piers
+  const pierGeo = new THREE.BoxGeometry(0.32, gateH + 0.16, 0.34);
+  [-gateW * 0.5 - 0.12, gateW * 0.5 + 0.12].forEach((px) => {
+    const pier = new THREE.Mesh(pierGeo, shared.stoneBaseMat);
+    pier.position.set(px, (gateH + 0.16) * 0.5, 0);
+    group.add(pier);
+  });
+
+  // Heavy dark iron backing recess + outer forged steel frame
+  const backing = new THREE.Mesh(
+    new THREE.PlaneGeometry(gateW, gateH),
+    new THREE.MeshBasicMaterial({ color: 0x03080a })
+  );
+  backing.position.set(0, gateH * 0.5, 0.14);
+  backing.rotation.y = Math.PI;
+  group.add(backing);
+
+  // Horizontal rusted iron crossbars
+  [0.14, 1.48, gateH - 0.14].forEach((hy) => {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(gateW, 0.1, 0.08), shared.ironMat);
+    rail.position.set(0, hy, 0);
+    group.add(rail);
+  });
+
+  // Vertical forged iron bars with spear-point finials
+  const barCount = 11;
+  const barGeo = new THREE.CylinderGeometry(0.024, 0.024, gateH - 0.18, 6);
+  const finialGeo = new THREE.ConeGeometry(0.044, 0.16, 4);
+  for (let i = 0; i < barCount; i++) {
+    const bx = -gateW * 0.46 + (i / (barCount - 1)) * (gateW * 0.92);
+    const bar = new THREE.Mesh(barGeo, shared.ironMat);
+    bar.position.set(bx, gateH * 0.5, 0);
+    group.add(bar);
+
+    const finial = new THREE.Mesh(finialGeo, shared.ironMat);
+    finial.position.set(bx, gateH + 0.04, 0);
+    group.add(finial);
+  }
+
+  // Heavy rusted iron lock chain & tarnished brass padlock binding the center bars
+  const chainLinks = 5;
+  const linkGeo = new THREE.TorusGeometry(0.045, 0.012, 6, 10);
+  for (let i = 0; i < chainLinks; i++) {
+    const link = new THREE.Mesh(linkGeo, shared.ironMat);
+    link.position.set(-0.12 + i * 0.06, 1.48, -0.05);
+    link.rotation.y = i % 2 === 0 ? 0.35 : Math.PI * 0.45;
+    group.add(link);
+  }
+  const padlockBody = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.13, 0.05), shared.brassMat);
+  padlockBody.position.set(0, 1.34, -0.075);
+  group.add(padlockBody);
+  const padlockShackle = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.011, 6, 12, Math.PI), shared.ironMat);
+  padlockShackle.position.set(0, 1.41, -0.075);
+  group.add(padlockShackle);
+
+  return group;
+}
+

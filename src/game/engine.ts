@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { HorrorAudioManager } from './audio';
 import { GhostAIController } from './ghostAI';
-import { HaveliWorld, buildHaveliWorld } from './haveliMap';
+import { HaveliWorld, StealthCoverCheck, buildHaveliWorld } from './haveliMap';
 import {
   AlmirahRig,
   FlashlightRig,
@@ -12,26 +12,64 @@ import {
 } from './models';
 import { ProceduralTexturePack, createProceduralTextures } from './textures';
 import {
+  ActiveEnemyHudState,
   CHAPTER_CONFIGS,
   ChapterNumber,
   DIFFICULTY_CONFIGS,
   Difficulty,
   DifficultyConfig,
+  EnemyCombatEntity,
   GamePhase,
   GraphicsQuality,
   HudSnapshot,
   LoreNoteData,
   MinimapData,
   MinimapObjective,
+  PlayerStance,
   RITUAL_ITEMS,
   RitualItemId,
+  StealthReason,
   SubtitleState,
 } from './types';
 
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _move = new THREE.Vector3();
+const _toEnemy = new THREE.Vector3();
+const _kundCenter = new THREE.Vector3(0, 0.72, 0);
 const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _dawnHemiColor = new THREE.Color(0xffe09c);
+const _dawnMoonColor = new THREE.Color(0xffd478);
+const _dawnBgColor = new THREE.Color(0x281a0c);
+const _dawnFogColor = new THREE.Color(0x2c1d0d);
+const MAX_CAMERA_PITCH = (75 * Math.PI) / 180; // Strict ±75° vertical pitch clamp
+
+const COLD_TEAL_BG = 0x051115;
+const COLD_TEAL_HEMI_SKY = 0x286472;
+const COLD_TEAL_HEMI_GROUND = 0x171310;
+const COLD_TEAL_MOON = 0x58a8ba;
+const FOG_DENSITY_HIGH = 0.068;
+const FOG_DENSITY_LOW = 0.082;
+
+const DUST_HIGH_COUNT = 200;
+const DUST_LOW_COUNT = 75;
+const EMBER_HIGH_COUNT = 110;
+const EMBER_LOW_COUNT = 44;
+const PICKUP_BURST_COUNT = 28;
+
+const EYE_HEIGHT_STANDING = 1.7;
+const EYE_HEIGHT_CROUCH = 1.0;
+const EYE_HEIGHT_PRONE = 0.45;
+const BODY_HEIGHT_STANDING = 1.75;
+const BODY_HEIGHT_CROUCH = 1.08;
+const BODY_HEIGHT_PRONE = 0.52;
+const JUMP_VELOCITY = 5.4;
+const GRAVITY = 15.5;
+const ATTACK_COOLDOWN_SEC = 6.0;
+const ATTACK_STAMINA_COST = 20;
+const ATTACK_RANGE_METERS = 2.5;
+const ATTACK_ANIM_DURATION = 0.42;
+const ATTACK_CONE_COS = Math.cos((65 * Math.PI) / 180);
 
 export interface TouchInputState {
   moveX: number;
@@ -45,6 +83,8 @@ export class MokshaGameEngine {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private isSoftwareGl: boolean;
+  private isMobile: boolean;
+  private chapterConfigScratch: DifficultyConfig = { ...DIFFICULTY_CONFIGS.normal };
 
   private textures: ProceduralTexturePack;
   private world: HaveliWorld;
@@ -56,6 +96,16 @@ export class MokshaGameEngine {
   private moonLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
   private dustParticles: THREE.Points;
+  private emberPoints: THREE.Points;
+  private emberPositions: Float32Array;
+  private emberVelocities: Float32Array;
+  private emberLife: Float32Array;
+  private emberMaxLife: Float32Array;
+  private pickupBurstPoints: THREE.Points;
+  private pickupBurstPositions: Float32Array;
+  private pickupBurstVelocities: Float32Array;
+  private pickupBurstLife = 0;
+  private pickupBurstLight: THREE.PointLight;
 
   private phase: GamePhase = 'title';
   private difficulty: Difficulty = 'normal';
@@ -64,9 +114,34 @@ export class MokshaGameEngine {
   private chapter2Decoded = false;
   private chapter3NextBellIndex = 0;
 
-  private playerPos = new THREE.Vector3(0, 1.65, 11.4);
+  private playerPos = new THREE.Vector3(0, EYE_HEIGHT_STANDING, 11.4);
   private playerYaw = 0;
   private playerPitch = 0;
+  private stance: PlayerStance = 'standing';
+  private playerFeetY = 0;
+  private playerVelY = 0;
+  private isGrounded = true;
+  private currentEyeHeight = EYE_HEIGHT_STANDING;
+  private landingDip = 0;
+  private headroomBlockedTimer = 0;
+  private coverScratch: StealthCoverCheck = { underFurniture: false, nearCover: false };
+  private isConcealed = false;
+  private stealthReason: StealthReason = 'none';
+  private stealthFactor = 1.0;
+
+  private combatEnemies: EnemyCombatEntity[] = [];
+  private activeCombatEnemy: EnemyCombatEntity | null = null;
+  private attackCooldown = 0;
+  private attackAnimTime = 0;
+  private attackAnimActive = false;
+  private attackLandedHit = false;
+  private attackHitFlash = 0;
+  private attackRecoilPitch = 0;
+  private attackRecoilRoll = 0;
+  private lookLagYaw = 0;
+  private lookLagPitch = 0;
+  private interactImpulse = 0;
+
   private walkBobPhase = 0;
   private footstepCooldown = 0;
   private breathTimer = 1.6;
@@ -141,15 +216,20 @@ export class MokshaGameEngine {
       }
     })();
 
+    this.isMobile =
+      typeof window !== 'undefined' &&
+      ('ontouchstart' in window ||
+        navigator.maxTouchPoints > 0 ||
+        window.matchMedia('(pointer: coarse)').matches);
+
     this.renderer = new THREE.WebGLRenderer({
-      antialias: !this.isSoftwareGl && initialQuality === 'high',
+      antialias: !this.isSoftwareGl && !this.isMobile && initialQuality === 'high',
       powerPreference: 'high-performance',
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
-    this.renderer.shadowMap.enabled = !this.isSoftwareGl && initialQuality === 'high';
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = this.isMobile ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
     this.applyQualityPixelRatio();
     this.renderer.setSize(
       container.clientWidth || window.innerWidth,
@@ -160,16 +240,20 @@ export class MokshaGameEngine {
     canvas.style.display = 'block';
     canvas.style.width = '100%';
     canvas.style.height = '100%';
+    canvas.style.touchAction = 'none';
     container.appendChild(canvas);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x061013);
-    this.scene.fog = new THREE.FogExp2(0x061013, initialQuality === 'low' ? 0.082 : 0.072);
+    this.scene.background = new THREE.Color(COLD_TEAL_BG);
+    this.scene.fog = new THREE.FogExp2(
+      COLD_TEAL_BG,
+      initialQuality === 'low' ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH
+    );
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
     this.scene.environment = this.envRT.texture;
-    this.scene.environmentIntensity = 0.24;
+    this.scene.environmentIntensity = 0.22;
     pmrem.dispose();
 
     const aspect =
@@ -178,17 +262,19 @@ export class MokshaGameEngine {
     this.camera = new THREE.PerspectiveCamera(70, aspect, 0.08, 48);
     this.scene.add(this.camera);
 
-    this.flashlight = createFlashlightViewModel();
+    // Create full procedural PBR texture pack before constructing flashlight & world meshes
+    this.textures = createProceduralTextures(this.renderer, this.isMobile);
+
+    this.flashlight = createFlashlightViewModel(this.textures);
     this.camera.add(this.flashlight.viewGroup);
     this.camera.add(this.flashlight.spotLight);
     this.camera.add(this.flashlight.spotLight.target);
 
-    this.hemiLight = new THREE.HemisphereLight(0x285662, 0x1a1410, 0.65);
+    this.hemiLight = new THREE.HemisphereLight(COLD_TEAL_HEMI_SKY, COLD_TEAL_HEMI_GROUND, 0.62);
     this.scene.add(this.hemiLight);
 
-    this.moonLight = new THREE.DirectionalLight(0x63a8b8, 1.35);
+    this.moonLight = new THREE.DirectionalLight(COLD_TEAL_MOON, 1.38);
     this.moonLight.position.set(7, 16, -6);
-    this.moonLight.castShadow = !this.isSoftwareGl && initialQuality === 'high';
     this.moonLight.shadow.mapSize.width = 1024;
     this.moonLight.shadow.mapSize.height = 1024;
     this.moonLight.shadow.camera.near = 1;
@@ -202,8 +288,10 @@ export class MokshaGameEngine {
     this.moonLight.shadow.normalBias = 0.02;
     this.scene.add(this.moonLight);
 
-    this.textures = createProceduralTextures(this.renderer);
-    this.world = buildHaveliWorld(this.textures, initialQuality === 'low');
+    this.applyShadowQuality();
+
+    this.world = buildHaveliWorld(this.textures, initialQuality === 'low' || this.isMobile);
+    this.world.applyQualityMaterials(initialQuality === 'low');
     this.scene.add(this.world.root);
 
     this.ghostRig = createGhostModel(this.textures);
@@ -215,9 +303,37 @@ export class MokshaGameEngine {
     });
 
     this.ghostAI = new GhostAIController(this.ghostRig, this.world, this.audio);
+    this.combatEnemies = [this.ghostAI];
 
-    this.dustParticles = this.createDustMotes(initialQuality === 'low' ? 90 : 220);
+    this.dustParticles = this.createDustMotes(DUST_HIGH_COUNT);
+    this.dustParticles.geometry.setDrawRange(
+      0,
+      initialQuality === 'low' ? DUST_LOW_COUNT : DUST_HIGH_COUNT
+    );
     this.scene.add(this.dustParticles);
+
+    // Pooled warm rising embers from Havan Kund & Diyas (zero per-frame allocations)
+    this.emberPositions = new Float32Array(EMBER_HIGH_COUNT * 3);
+    this.emberVelocities = new Float32Array(EMBER_HIGH_COUNT * 3);
+    this.emberLife = new Float32Array(EMBER_HIGH_COUNT);
+    this.emberMaxLife = new Float32Array(EMBER_HIGH_COUNT);
+    this.emberPoints = this.createEmberPool();
+    this.emberPoints.geometry.setDrawRange(
+      0,
+      initialQuality === 'low' ? EMBER_LOW_COUNT : EMBER_HIGH_COUNT
+    );
+    this.scene.add(this.emberPoints);
+
+    // Pooled radiant glow burst for item pickups, lighting diyas, ringing bells & shattering seals
+    this.pickupBurstPositions = new Float32Array(PICKUP_BURST_COUNT * 3);
+    this.pickupBurstVelocities = new Float32Array(PICKUP_BURST_COUNT * 3);
+    this.pickupBurstPoints = this.createPickupBurstPool();
+    this.pickupBurstPoints.visible = false;
+    this.scene.add(this.pickupBurstPoints);
+
+    this.pickupBurstLight = new THREE.PointLight(0xffd268, 0, 5.2, 2);
+    this.pickupBurstLight.castShadow = false;
+    this.scene.add(this.pickupBurstLight);
 
     if (!this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.camera);
@@ -262,49 +378,175 @@ export class MokshaGameEngine {
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 14;
-      pos[i * 3 + 1] = 0.4 + Math.random() * 4.8;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 14;
+      pos[i * 3] = (Math.random() - 0.5) * 26;
+      pos[i * 3 + 1] = 0.35 + Math.random() * 4.7;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 26;
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const mat = new THREE.PointsMaterial({
-      color: 0xa9cfd6,
-      size: 0.045,
+      color: 0xa4d2dc,
+      map: this.textures.softParticle,
+      size: 0.068,
       transparent: true,
-      opacity: 0.36,
+      opacity: 0.34,
+      blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
     return new THREE.Points(geo, mat);
   }
 
+  private respawnEmber(index: number, climaxBoost = false): void {
+    const emitters = this.world.emberEmitters;
+    let emitterPos = _kundCenter;
+    if (emitters.length > 0) {
+      // Bias 55% of embers toward the central Havan Kund fire, 45% across ambient & lit shrine diyas
+      if (climaxBoost || Math.random() < 0.55) {
+        emitterPos = emitters[0];
+      } else {
+        const pick = 1 + Math.floor(Math.random() * Math.max(1, emitters.length - 1));
+        emitterPos = emitters[Math.min(pick, emitters.length - 1)];
+      }
+      // Also mix in lit Chapter 1 shrine diyas when active
+      if (!climaxBoost && this.currentChapter === 1 && Math.random() < 0.25) {
+        const litDiyas = this.world.shrineDiyas;
+        for (let k = 0; k < litDiyas.length; k++) {
+          const candidate = litDiyas[(index + k) % litDiyas.length];
+          if (candidate.lit) {
+            emitterPos = candidate.position;
+            break;
+          }
+        }
+      }
+    }
+
+    const isKund = emitterPos === emitters[0];
+    const spread = isKund ? (climaxBoost ? 0.62 : 0.42) : 0.08;
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.random() * spread;
+
+    const i3 = index * 3;
+    this.emberPositions[i3] = emitterPos.x + Math.cos(angle) * r;
+    this.emberPositions[i3 + 1] = emitterPos.y + (isKund ? 0.04 : 0.14) + Math.random() * 0.1;
+    this.emberPositions[i3 + 2] = emitterPos.z + Math.sin(angle) * r;
+
+    this.emberVelocities[i3] = (Math.random() - 0.5) * (climaxBoost ? 0.42 : 0.18);
+    this.emberVelocities[i3 + 1] = (isKund ? 0.55 : 0.28) + Math.random() * (climaxBoost ? 0.95 : 0.45);
+    this.emberVelocities[i3 + 2] = (Math.random() - 0.5) * (climaxBoost ? 0.42 : 0.18);
+
+    const maxL = (isKund ? 1.5 : 1.05) + Math.random() * 1.4;
+    this.emberMaxLife[index] = maxL;
+    this.emberLife[index] = maxL;
+  }
+
+  private createEmberPool(): THREE.Points {
+    const geo = new THREE.BufferGeometry();
+    const colors = new Float32Array(EMBER_HIGH_COUNT * 3);
+    for (let i = 0; i < EMBER_HIGH_COUNT; i++) {
+      this.respawnEmber(i, false);
+      // Stagger initial lifetimes so embers are already rising smoothly on frame 1
+      this.emberLife[i] = Math.random() * this.emberMaxLife[i];
+      const warmMix = Math.random();
+      colors[i * 3] = 1.0;
+      colors[i * 3 + 1] = 0.42 + warmMix * 0.44;
+      colors[i * 3 + 2] = 0.1 + warmMix * 0.28;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(this.emberPositions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const mat = new THREE.PointsMaterial({
+      size: 0.075,
+      map: this.textures.softParticle,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    return new THREE.Points(geo, mat);
+  }
+
+  private createPickupBurstPool(): THREE.Points {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pickupBurstPositions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xffd268,
+      map: this.textures.softParticle,
+      size: 0.14,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    return new THREE.Points(geo, mat);
+  }
+
+  private spawnPickupBurst(origin: THREE.Vector3, colorHex: number): void {
+    const mat = this.pickupBurstPoints.material as THREE.PointsMaterial;
+    mat.color.setHex(colorHex);
+    mat.opacity = 0.95;
+    this.pickupBurstLight.color.setHex(colorHex);
+    this.pickupBurstLight.position.set(origin.x, origin.y + 0.32, origin.z);
+    this.pickupBurstLight.intensity = 4.6;
+    this.pickupBurstLife = 0.72;
+    this.pickupBurstPoints.visible = true;
+
+    for (let i = 0; i < PICKUP_BURST_COUNT; i++) {
+      const i3 = i * 3;
+      const theta = (i / PICKUP_BURST_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
+      const spd = 0.55 + Math.random() * 1.45;
+      this.pickupBurstPositions[i3] = origin.x + (Math.random() - 0.5) * 0.16;
+      this.pickupBurstPositions[i3 + 1] = origin.y + 0.15 + Math.random() * 0.16;
+      this.pickupBurstPositions[i3 + 2] = origin.z + (Math.random() - 0.5) * 0.16;
+      this.pickupBurstVelocities[i3] = Math.cos(theta) * spd;
+      this.pickupBurstVelocities[i3 + 1] = 0.75 + Math.random() * 1.35;
+      this.pickupBurstVelocities[i3 + 2] = Math.sin(theta) * spd;
+    }
+    (this.pickupBurstPoints.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+  }
+
+  private triggerInteractImpulse(strength = 0.9): void {
+    this.interactImpulse = Math.min(1.2, Math.max(this.interactImpulse, strength));
+  }
+
   private applyQualityPixelRatio(): void {
     if (this.isSoftwareGl) {
       this.renderer.setPixelRatio(1);
+      return;
+    }
+    if (this.isMobile) {
+      // Strictly cap Android WebView DPR to 1.0 (0.75 on Low mode) for locked 60 FPS
+      this.renderer.setPixelRatio(this.quality === 'low' ? 0.75 : 1.0);
     } else {
-      const isMobile =
-        typeof window !== 'undefined' &&
-        (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0);
-      const cap =
-        this.quality === 'low'
-          ? isMobile
-            ? 1.0
-            : 1.15
-          : isMobile
-            ? 1.5
-            : 2;
+      const cap = this.quality === 'low' ? 1.15 : 2.0;
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
     }
   }
 
+  private applyShadowQuality(): void {
+    const canShadow = !this.isSoftwareGl && this.quality === 'high';
+    if (this.isMobile) {
+      // On mobile: zero shadows on Low; single 512x512 BasicShadowMap on flashlight only in High
+      this.renderer.shadowMap.enabled = canShadow;
+      this.moonLight.castShadow = false;
+      this.flashlight.spotLight.castShadow = canShadow;
+    } else {
+      this.renderer.shadowMap.enabled = canShadow;
+      this.moonLight.castShadow = canShadow;
+      this.flashlight.spotLight.castShadow = false;
+    }
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
   public setGraphicsQuality(quality: GraphicsQuality): void {
     this.quality = quality;
+    const isLow = quality === 'low';
     this.applyQualityPixelRatio();
-    const shadows = !this.isSoftwareGl && quality === 'high';
-    this.renderer.shadowMap.enabled = shadows;
-    this.moonLight.castShadow = shadows;
-    this.dustParticles.visible = quality === 'high';
+    this.applyShadowQuality();
+    this.world.applyQualityMaterials(isLow);
+    this.dustParticles.visible = true;
+    this.dustParticles.geometry.setDrawRange(0, isLow ? DUST_LOW_COUNT : DUST_HIGH_COUNT);
+    this.emberPoints.geometry.setDrawRange(0, isLow ? EMBER_LOW_COUNT : EMBER_HIGH_COUNT);
     if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.density = quality === 'low' ? 0.084 : 0.072;
+      this.scene.fog.density = isLow ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
     }
   }
 
@@ -340,13 +582,25 @@ export class MokshaGameEngine {
   private getChapterScaledConfig(): DifficultyConfig {
     const base = DIFFICULTY_CONFIGS[this.difficulty];
     const mult = CHAPTER_CONFIGS[this.currentChapter].ghostSpeedMult;
-    return {
-      ...base,
-      patrolSpeed: base.patrolSpeed * mult,
-      investigateSpeed: base.investigateSpeed * mult,
-      chaseSpeed: base.chaseSpeed * mult,
-      climaxSpeed: base.climaxSpeed * mult,
-    };
+    const out = this.chapterConfigScratch;
+    out.label = base.label;
+    out.summary = base.summary;
+    out.patrolSpeed = base.patrolSpeed * mult;
+    out.investigateSpeed = base.investigateSpeed * mult;
+    out.chaseSpeed = base.chaseSpeed * mult;
+    out.climaxSpeed = base.climaxSpeed * mult;
+    out.visionRangeDark = base.visionRangeDark;
+    out.visionRangeLit = base.visionRangeLit;
+    out.hearingRange = base.hearingRange;
+    out.batteryDrainPerSec = base.batteryDrainPerSec;
+    out.climaxDuration = base.climaxDuration;
+    out.hintDelay = base.hintDelay;
+    out.spawnGracePeriod = base.spawnGracePeriod;
+    out.playerWalkSpeed = base.playerWalkSpeed;
+    out.playerSprintSpeed = base.playerSprintSpeed;
+    out.staminaDrainPerSec = base.staminaDrainPerSec;
+    out.staminaRegenPerSec = base.staminaRegenPerSec;
+    return out;
   }
 
   private completeNonFinalChapter(): void {
@@ -368,20 +622,49 @@ export class MokshaGameEngine {
     this.world.configureForChapter(chapter);
     this.ghostAI.reset();
 
-    // Restore nocturnal moonlight atmosphere in case previous run ended in golden Shanti victory
-    this.hemiLight.color.setHex(0x285662);
-    this.hemiLight.intensity = 0.65;
-    this.moonLight.color.setHex(0x63a8b8);
-    this.moonLight.intensity = 1.35;
-    this.scene.background = new THREE.Color(0x061013);
+    // Restore cold moonlit teal atmosphere in case previous run ended in golden Shanti victory
+    this.hemiLight.color.setHex(COLD_TEAL_HEMI_SKY);
+    this.hemiLight.groundColor.setHex(COLD_TEAL_HEMI_GROUND);
+    this.hemiLight.intensity = 0.62;
+    this.moonLight.color.setHex(COLD_TEAL_MOON);
+    this.moonLight.intensity = 1.38;
+    if (this.scene.background instanceof THREE.Color) {
+      this.scene.background.setHex(COLD_TEAL_BG);
+    }
     if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.color.setHex(0x061013);
-      this.scene.fog.density = this.quality === 'low' ? 0.084 : 0.072;
+      this.scene.fog.color.setHex(COLD_TEAL_BG);
+      this.scene.fog.density = this.quality === 'low' ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
     }
 
-    this.playerPos.set(0, 1.65, 11.4);
+    this.playerPos.set(0, EYE_HEIGHT_STANDING, 11.4);
     this.playerYaw = 0;
     this.playerPitch = 0;
+    this.stance = 'standing';
+    this.playerFeetY = 0;
+    this.playerVelY = 0;
+    this.isGrounded = true;
+    this.currentEyeHeight = EYE_HEIGHT_STANDING;
+    this.landingDip = 0;
+    this.headroomBlockedTimer = 0;
+    this.isConcealed = false;
+    this.stealthReason = 'none';
+    this.stealthFactor = 1.0;
+    this.activeCombatEnemy = null;
+    this.attackCooldown = 0;
+    this.attackAnimTime = 0;
+    this.attackAnimActive = false;
+    this.attackLandedHit = false;
+    this.attackHitFlash = 0;
+    this.attackRecoilPitch = 0;
+    this.attackRecoilRoll = 0;
+    this.lookLagYaw = 0;
+    this.lookLagPitch = 0;
+    this.interactImpulse = 0;
+    this.pickupBurstLife = 0;
+    this.pickupBurstPoints.visible = false;
+    this.pickupBurstLight.intensity = 0;
+    this.flashlight.sparkGroup.visible = false;
+    this.flashlight.sparkLight.intensity = 0;
     this.stamina = 100;
     this.battery = 100;
     this.flashlightOn = true;
@@ -402,9 +685,13 @@ export class MokshaGameEngine {
     this.proximityIntensity = 0;
     this.subtitle = null;
     this.keys.clear();
+    this.touchInput.moveX = 0;
+    this.touchInput.moveY = 0;
+    this.touchInput.sprint = false;
 
     this.world.almirahs.forEach((a) => {
       a.doorOpenAmount = 0;
+      a.doorSwingBoost = 0;
       a.leftDoorPivot.rotation.y = 0;
       a.rightDoorPivot.rotation.y = 0;
     });
@@ -497,14 +784,17 @@ export class MokshaGameEngine {
     this.hidingAlmirah = null;
     this.keys.clear();
     this.releasePointerLock();
-    this.hemiLight.color.setHex(0x285662);
-    this.hemiLight.intensity = 0.65;
-    this.moonLight.color.setHex(0x63a8b8);
-    this.moonLight.intensity = 1.35;
-    this.scene.background = new THREE.Color(0x061013);
+    this.hemiLight.color.setHex(COLD_TEAL_HEMI_SKY);
+    this.hemiLight.groundColor.setHex(COLD_TEAL_HEMI_GROUND);
+    this.hemiLight.intensity = 0.62;
+    this.moonLight.color.setHex(COLD_TEAL_MOON);
+    this.moonLight.intensity = 1.38;
+    if (this.scene.background instanceof THREE.Color) {
+      this.scene.background.setHex(COLD_TEAL_BG);
+    }
     if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.color.setHex(0x061013);
-      this.scene.fog.density = this.quality === 'low' ? 0.084 : 0.072;
+      this.scene.fog.color.setHex(COLD_TEAL_BG);
+      this.scene.fog.density = this.quality === 'low' ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
     }
     this.audio.setTension(0, false);
     this.emitHud();
@@ -515,15 +805,169 @@ export class MokshaGameEngine {
     this.audio.unlock();
     if (this.battery <= 0.5 && !this.flashlightOn) return;
     this.flashlightOn = !this.flashlightOn;
+    this.triggerInteractImpulse(0.32);
     this.audio.playFlashlightClick();
     this.emitHud();
+  }
+
+  private getTargetBodyHeight(stance: PlayerStance): number {
+    if (stance === 'prone') return BODY_HEIGHT_PRONE;
+    if (stance === 'crouching') return BODY_HEIGHT_CROUCH;
+    return BODY_HEIGHT_STANDING;
+  }
+
+  private getTargetEyeHeight(stance: PlayerStance): number {
+    if (stance === 'prone') return EYE_HEIGHT_PRONE;
+    if (stance === 'crouching') return EYE_HEIGHT_CROUCH;
+    return EYE_HEIGHT_STANDING;
+  }
+
+  public setStance(next: PlayerStance): void {
+    if (this.phase !== 'playing' && this.phase !== 'climax') return;
+    if (this.hidingAlmirah) return;
+    if (next === this.stance) return;
+    this.audio.unlock();
+
+    const targetBodyH = this.getTargetBodyHeight(next);
+    const currentBodyH = this.getTargetBodyHeight(this.stance);
+    // Block rising if physically underneath a table or wooden charpai
+    if (targetBodyH > currentBodyH && !this.world.hasHeadroomAt(this.playerPos.x, this.playerPos.z, 0.34, targetBodyH)) {
+      this.headroomBlockedTimer = 1.6;
+      this.audio.playFlashlightClick();
+      this.emitHud();
+      return;
+    }
+
+    this.stance = next;
+    if (next !== 'standing') {
+      this.touchInput.sprint = false;
+    }
+    this.audio.playStanceShift(next === 'prone');
+    this.emitHud();
+  }
+
+  public toggleCrouch(): void {
+    if (this.phase !== 'playing' && this.phase !== 'climax') return;
+    if (this.hidingAlmirah) return;
+    this.setStance(this.stance === 'crouching' ? 'standing' : 'crouching');
+  }
+
+  public toggleProne(): void {
+    if (this.phase !== 'playing' && this.phase !== 'climax') return;
+    if (this.hidingAlmirah) return;
+    this.setStance(this.stance === 'prone' ? 'standing' : 'prone');
+  }
+
+  public triggerJump(): void {
+    if (this.phase !== 'playing' && this.phase !== 'climax') return;
+    if (this.hidingAlmirah) return;
+    this.audio.unlock();
+
+    // Pressing Jump while Crouched or Prone smoothly stands the player back up
+    if (this.stance !== 'standing') {
+      this.setStance('standing');
+      return;
+    }
+
+    if (!this.isGrounded) return;
+    this.playerVelY = JUMP_VELOCITY;
+    this.isGrounded = false;
+    this.audio.playJumpTakeoff();
+  }
+
+  /** Register a future chapter boss, shadow guardian, or rakshasa into the combat hit-check pipeline */
+  public registerCombatEnemy(enemy: EnemyCombatEntity): void {
+    if (!this.combatEnemies.some((e) => e.id === enemy.id)) {
+      this.combatEnemies.push(enemy);
+    }
+  }
+
+  public unregisterCombatEnemy(enemyId: string): void {
+    this.combatEnemies = this.combatEnemies.filter((e) => e.id !== enemyId);
+    if (this.activeCombatEnemy?.id === enemyId) {
+      this.activeCombatEnemy = null;
+    }
+  }
+
+  /**
+   * Modular first-person Vintage Torch Bash combat strike:
+   * 6s cooldown, 20 stamina cost, 2.5m forward cone check, golden holy spark VFX,
+   * staggers & pushes back the Ghost for 2.0s or damages mortal bosses/rakshasas.
+   */
+  public triggerPlayerAttack(): boolean {
+    if (this.phase !== 'playing' && this.phase !== 'climax') return false;
+    if (this.hidingAlmirah) return false;
+    if (this.attackCooldown > 0 || this.stamina < ATTACK_STAMINA_COST) return false;
+
+    this.audio.unlock();
+    this.stamina = Math.max(0, this.stamina - ATTACK_STAMINA_COST);
+    this.attackCooldown = ATTACK_COOLDOWN_SEC;
+    this.attackAnimActive = true;
+    this.attackAnimTime = 0;
+    this.attackLandedHit = false;
+    this.attackRecoilPitch = 0.065;
+    this.attackRecoilRoll = -0.055;
+    this.audio.playTorchBashSwing();
+
+    // Forward 2.5m horizontal cone melee hit-check against all registered EnemyCombatEntity targets
+    _fwd.set(-Math.sin(this.playerYaw), 0, -Math.cos(this.playerYaw)).normalize();
+    let hitAny = false;
+
+    for (let i = 0; i < this.combatEnemies.length; i++) {
+      const enemy = this.combatEnemies[i];
+      if (enemy.isDefeated) continue;
+      _toEnemy.set(enemy.position.x - this.playerPos.x, 0, enemy.position.z - this.playerPos.z);
+      const dist = _toEnemy.length();
+      if (dist > ATTACK_RANGE_METERS) continue;
+
+      const dot = dist > 0.001 ? (_toEnemy.x * _fwd.x + _toEnemy.z * _fwd.z) / dist : 1;
+      if (dot < ATTACK_CONE_COS && dist > 1.15) continue;
+
+      // Require clear line of sight so attacks don't strike through solid walls
+      if (!this.world.hasLineOfSight(this.playerPos, _toEnemy.set(enemy.position.x, 0, enemy.position.z))) {
+        continue;
+      }
+
+      const kbX = dist > 0.01 ? (enemy.position.x - this.playerPos.x) / dist : _fwd.x;
+      const kbZ = dist > 0.01 ? (enemy.position.z - this.playerPos.z) / dist : _fwd.z;
+      const hit = enemy.takeDamage(25, { x: kbX, z: kbZ });
+      if (hit) {
+        hitAny = true;
+        if (enemy.isBossOrMortal) {
+          this.activeCombatEnemy = enemy;
+          if (enemy.hp <= 0) {
+            enemy.onDefeat();
+          }
+        }
+      }
+    }
+
+    if (hitAny) {
+      this.attackLandedHit = true;
+      this.attackHitFlash = 1.0;
+      this.attackRecoilPitch = 0.11;
+      this.attackRecoilRoll = -0.09;
+      this.audio.playHolyWardImpact();
+    }
+
+    this.emitHud();
+    return true;
   }
 
   public applyLookDelta(dx: number, dy: number): void {
     if (this.phase !== 'playing' && this.phase !== 'climax') return;
     const sens = 0.0024;
-    this.playerYaw -= dx * sens;
-    this.playerPitch = Math.max(-1.15, Math.min(1.15, this.playerPitch - dy * sens));
+    const dYaw = -dx * sens;
+    const dPitch = -dy * sens;
+    this.playerYaw += dYaw;
+    this.playerPitch = Math.max(
+      -MAX_CAMERA_PITCH,
+      Math.min(MAX_CAMERA_PITCH, this.playerPitch + dPitch)
+    );
+
+    // Feed smooth FPS camera-turn inertia lag for the held vintage flashlight
+    this.lookLagYaw = Math.max(-0.14, Math.min(0.14, this.lookLagYaw + dYaw * 0.42));
+    this.lookLagPitch = Math.max(-0.12, Math.min(0.12, this.lookLagPitch + dPitch * 0.36));
 
     if (this.hidingAlmirah) {
       const centerYaw = this.hidingAlmirah.facingYaw + Math.PI;
@@ -545,8 +989,16 @@ export class MokshaGameEngine {
 
     // 1. Exit almirah
     if (this.hidingAlmirah) {
-      this.playerPos.set(this.hidingAlmirah.exitPos.x, 1.65, this.hidingAlmirah.exitPos.z);
+      const exitedAlm = this.hidingAlmirah;
+      exitedAlm.doorSwingBoost = 0.72;
+      this.stance = 'standing';
+      this.playerFeetY = 0;
+      this.playerVelY = 0;
+      this.isGrounded = true;
+      this.currentEyeHeight = EYE_HEIGHT_STANDING;
+      this.playerPos.set(exitedAlm.exitPos.x, EYE_HEIGHT_STANDING, exitedAlm.exitPos.z);
       this.hidingAlmirah = null;
+      this.triggerInteractImpulse(0.9);
       this.audio.playWoodCreak();
       this.ghostAI.notifyNoise(this.playerPos, 7.5);
       this.emitHud();
@@ -567,6 +1019,8 @@ export class MokshaGameEngine {
           if (diya.light) diya.light.intensity = 1.9;
           this.timeSinceProgress = 0;
           this.hintActive = false;
+          this.triggerInteractImpulse(0.85);
+          this.spawnPickupBurst(diya.position, 0xffb84d);
           this.audio.playHavanPlace(false);
 
           const litCount = this.world.shrineDiyas.filter((x) => x.lit).length;
@@ -588,6 +1042,8 @@ export class MokshaGameEngine {
       const readCount = this.world.notes.filter((n) => n.read).length;
       if (readCount >= this.world.notes.length && !this.chapter2Decoded && distToKund < 3.2) {
         this.chapter2Decoded = true;
+        this.triggerInteractImpulse(1.0);
+        this.spawnPickupBurst(_kundCenter, 0xffd268);
         this.audio.playHavanPlace(true);
         this.completeNonFinalChapter();
         return;
@@ -606,6 +1062,8 @@ export class MokshaGameEngine {
             this.chapter3NextBellIndex += 1;
             this.timeSinceProgress = 0;
             this.hintActive = false;
+            this.triggerInteractImpulse(0.95);
+            this.spawnPickupBurst(bell.position, 0xffe082);
             this.audio.playTempleBell(1.0);
             // Loud bell draws the ghost toward this room — ring & escape!
             this.ghostAI.notifyNoise(bell.position, 24);
@@ -639,6 +1097,8 @@ export class MokshaGameEngine {
           if (seal.light) seal.light.intensity = 0;
           this.timeSinceProgress = 0;
           this.hintActive = false;
+          this.triggerInteractImpulse(1.0);
+          this.spawnPickupBurst(seal.position, 0xff4450);
           this.audio.playHavanPlace(true);
           this.audio.speakGhostLine('ritual', true);
           this.ghostAI.notifyNoise(seal.position, 26);
@@ -665,6 +1125,8 @@ export class MokshaGameEngine {
         this.world.havanKund.itemSlots[id].visible = true;
         this.timeSinceProgress = 0;
         this.hintActive = false;
+        this.triggerInteractImpulse(0.95);
+        this.spawnPickupBurst(_kundCenter, 0xffae38);
 
         const isFinal = this.placedItems.length >= 4;
         this.audio.playHavanPlace(isFinal);
@@ -690,6 +1152,8 @@ export class MokshaGameEngine {
             this.holdingItem = item.id;
             this.timeSinceProgress = 0;
             this.hintActive = false;
+            this.triggerInteractImpulse(0.92);
+            this.spawnPickupBurst(item.position, 0xffd268);
             this.audio.playItemPickup();
             this.emitHud();
             return;
@@ -698,14 +1162,37 @@ export class MokshaGameEngine {
       }
     }
 
+    // 3. Open or Close Creaking Hinged Haveli Wing Doors
+    for (const door of this.world.hingedDoors) {
+      const d = Math.hypot(
+        this.playerPos.x - door.interactPos.x,
+        this.playerPos.z - door.interactPos.z
+      );
+      if (d < 2.55) {
+        door.isOpen = !door.isOpen;
+        this.triggerInteractImpulse(0.9);
+        this.audio.playWoodCreak();
+        this.ghostAI.notifyNoise(door.interactPos, 8.5, this.stealthFactor);
+        this.emitHud();
+        return;
+      }
+    }
+
     // 4. Climb into nearby wooden Almirah
     for (const alm of this.world.almirahs) {
       const d = Math.hypot(this.playerPos.x - alm.exitPos.x, this.playerPos.z - alm.exitPos.z);
       if (d < 1.95) {
         this.hidingAlmirah = alm;
+        alm.doorSwingBoost = 0.72;
+        this.stance = 'standing';
+        this.playerFeetY = 0;
+        this.playerVelY = 0;
+        this.isGrounded = true;
+        this.touchInput.sprint = false;
         this.playerPos.set(alm.insidePos.x, 1.56, alm.insidePos.z);
         this.playerYaw = alm.facingYaw + Math.PI;
         this.playerPitch = 0;
+        this.triggerInteractImpulse(0.85);
         this.audio.playWoodCreak();
         if (this.proximityIntensity > 0.35) {
           this.audio.playPlayerReaction('hide');
@@ -727,6 +1214,7 @@ export class MokshaGameEngine {
           this.hintActive = false;
           this.ghostAI.notifyNoise(note.position, 14);
         }
+        this.triggerInteractImpulse(0.65);
         this.activeNote = note.data;
         this.phase = 'note';
         this.keys.clear();
@@ -805,6 +1293,18 @@ export class MokshaGameEngine {
       }
     }
 
+    for (const door of this.world.hingedDoors) {
+      if (
+        Math.hypot(this.playerPos.x - door.interactPos.x, this.playerPos.z - door.interactPos.z) <
+        2.55
+      ) {
+        return {
+          text: `${door.isOpen ? 'Close' : 'Open'} ${door.roomName} Door`,
+          key: 'E',
+        };
+      }
+    }
+
     for (const alm of this.world.almirahs) {
       if (Math.hypot(this.playerPos.x - alm.exitPos.x, this.playerPos.z - alm.exitPos.z) < 1.95) {
         return { text: 'Hide inside Wooden Almirah', key: 'E' };
@@ -840,6 +1340,15 @@ export class MokshaGameEngine {
       this.toggleFlashlight();
     } else if (e.code === 'KeyE') {
       this.triggerInteract();
+    } else if (e.code === 'Space') {
+      if (this.phase === 'playing' || this.phase === 'climax') {
+        e.preventDefault();
+        this.triggerJump();
+      }
+    } else if (e.code === 'KeyC') {
+      this.toggleCrouch();
+    } else if (e.code === 'KeyZ') {
+      this.toggleProne();
     }
   }
 
@@ -922,7 +1431,48 @@ export class MokshaGameEngine {
     this.scheduleNextFrame();
   };
 
+  private updateEmbersAndBurst(dt: number, timeSec: number, climaxBoost: boolean): void {
+    const activeEmbers = this.quality === 'low' ? EMBER_LOW_COUNT : EMBER_HIGH_COUNT;
+    for (let i = 0; i < activeEmbers; i++) {
+      this.emberLife[i] -= dt;
+      if (this.emberLife[i] <= 0) {
+        this.respawnEmber(i, climaxBoost);
+      } else {
+        const i3 = i * 3;
+        const swirl = Math.sin(timeSec * 3.1 + i * 1.7) * 0.14;
+        this.emberPositions[i3] += (this.emberVelocities[i3] + swirl) * dt;
+        this.emberPositions[i3 + 1] += this.emberVelocities[i3 + 1] * dt;
+        this.emberPositions[i3 + 2] +=
+          (this.emberVelocities[i3 + 2] + Math.cos(timeSec * 2.6 + i * 1.3) * 0.14) * dt;
+      }
+    }
+    (this.emberPoints.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+
+    if (this.pickupBurstLife > 0) {
+      this.pickupBurstLife = Math.max(0, this.pickupBurstLife - dt);
+      const norm = this.pickupBurstLife / 0.72;
+      for (let i = 0; i < PICKUP_BURST_COUNT; i++) {
+        const i3 = i * 3;
+        this.pickupBurstPositions[i3] += this.pickupBurstVelocities[i3] * dt;
+        this.pickupBurstPositions[i3 + 1] += this.pickupBurstVelocities[i3 + 1] * dt;
+        this.pickupBurstPositions[i3 + 2] += this.pickupBurstVelocities[i3 + 2] * dt;
+        this.pickupBurstVelocities[i3] *= Math.pow(0.28, dt);
+        this.pickupBurstVelocities[i3 + 1] -= 1.35 * dt;
+        this.pickupBurstVelocities[i3 + 2] *= Math.pow(0.28, dt);
+      }
+      (this.pickupBurstPoints.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      (this.pickupBurstPoints.material as THREE.PointsMaterial).opacity = norm * 0.95;
+      this.pickupBurstLight.intensity = norm * norm * 4.6;
+      if (this.pickupBurstLife <= 0) {
+        this.pickupBurstPoints.visible = false;
+        this.pickupBurstLight.intensity = 0;
+      }
+    }
+  }
+
   private updateScene(dt: number, timeSec: number): void {
+    const highDetail = this.quality === 'high';
+
     for (let i = 0; i < this.world.flickerLights.length; i++) {
       const fl = this.world.flickerLights[i];
       const f =
@@ -933,17 +1483,36 @@ export class MokshaGameEngine {
 
     if (this.dustParticles.visible) {
       const pos = this.dustParticles.geometry.attributes.position as THREE.BufferAttribute;
-      for (let i = 0; i < pos.count; i++) {
-        let y = pos.getY(i) + dt * 0.08;
-        if (y > 5.2) y = 0.35;
-        pos.setY(i, y);
+      const activeDust = highDetail ? DUST_HIGH_COUNT : DUST_LOW_COUNT;
+      for (let i = 0; i < activeDust; i++) {
+        let y = pos.getY(i) + dt * 0.075;
+        if (y > 5.1) y = 0.35;
+        const x = pos.getX(i) + Math.sin(timeSec * 0.65 + i) * dt * 0.03;
+        pos.setXY(i, x, y);
       }
       pos.needsUpdate = true;
     }
 
-    for (const alm of this.world.almirahs) {
-      const targetOpen = this.hidingAlmirah === alm ? 0.08 : 0;
-      alm.doorOpenAmount = THREE.MathUtils.damp(alm.doorOpenAmount, targetOpen, 8, dt);
+    this.updateEmbersAndBurst(dt, timeSec, this.phase === 'climax');
+
+    // Smoothly articulate all 4 creaking hinged Haveli wing doors
+    for (let i = 0; i < this.world.hingedDoors.length; i++) {
+      const door = this.world.hingedDoors[i];
+      if (door.ghostPushCooldown > 0) {
+        door.ghostPushCooldown = Math.max(0, door.ghostPushCooldown - dt);
+      }
+      const target = door.isOpen ? 1 : 0;
+      door.openAmount = THREE.MathUtils.damp(door.openAmount, target, 5.5, dt);
+      door.leftPivot.rotation.y = door.openAmount * 1.56;
+      door.rightPivot.rotation.y = -door.openAmount * 1.56;
+    }
+
+    // Smoothly swing wooden Almirah shutters wide on entry/exit before creaking shut
+    for (let i = 0; i < this.world.almirahs.length; i++) {
+      const alm = this.world.almirahs[i];
+      alm.doorSwingBoost = THREE.MathUtils.damp(alm.doorSwingBoost, 0, 4.5, dt);
+      const targetOpen = (this.hidingAlmirah === alm ? 0.08 : 0) + alm.doorSwingBoost;
+      alm.doorOpenAmount = THREE.MathUtils.damp(alm.doorOpenAmount, targetOpen, 8.5, dt);
       alm.leftDoorPivot.rotation.y = -alm.doorOpenAmount;
       alm.rightDoorPivot.rotation.y = alm.doorOpenAmount;
     }
@@ -957,10 +1526,19 @@ export class MokshaGameEngine {
         Math.cos(angle) * 6.4
       );
       this.camera.lookAt(-1.1, 1.18, -1.2);
-      this.ghostAI.setTitleShowcasePose(timeSec);
+      this.ghostAI.setTitleShowcasePose(timeSec, highDetail);
       this.flashlight.viewGroup.visible = true;
-      this.flashlight.spotLight.intensity = 6.2 + Math.sin(timeSec * 7.2) * 0.4;
+      this.flashlight.viewGroup.position.set(
+        0.28 + Math.cos(timeSec * 0.9) * 0.004,
+        -0.22 + Math.sin(timeSec * 1.8) * 0.005,
+        -0.44
+      );
+      this.flashlight.viewGroup.rotation.set(0.06, -0.09, 0.05);
+      this.flashlight.spotLight.intensity = 6.8 + Math.sin(timeSec * 7.2) * 0.42;
       this.flashlight.beamMesh.visible = true;
+      this.flashlight.innerBeamMesh.visible = true;
+      this.flashlight.beamDustPoints.visible = true;
+      this.flashlight.updateBeamDust(dt, timeSec, highDetail);
       this.world.havanKund.update(timeSec, false, 0, false);
       return;
     }
@@ -1008,20 +1586,23 @@ export class MokshaGameEngine {
         false,
         false,
         false,
-        DIFFICULTY_CONFIGS[this.difficulty]
+        DIFFICULTY_CONFIGS[this.difficulty],
+        1.0,
+        false,
+        highDetail
       );
       this.world.havanKund.update(timeSec, false, p, false);
 
       // Transform the cold cursed night into a radiant golden dawn across the entire haveli!
-      this.hemiLight.color.lerp(new THREE.Color(0xffe09c), dt * 0.75);
+      this.hemiLight.color.lerp(_dawnHemiColor, dt * 0.75);
       this.hemiLight.intensity = THREE.MathUtils.damp(this.hemiLight.intensity, 1.85, 1.4, dt);
-      this.moonLight.color.lerp(new THREE.Color(0xffd478), dt * 0.75);
+      this.moonLight.color.lerp(_dawnMoonColor, dt * 0.75);
       this.moonLight.intensity = THREE.MathUtils.damp(this.moonLight.intensity, 2.3, 1.4, dt);
       if (this.scene.background instanceof THREE.Color) {
-        this.scene.background.lerp(new THREE.Color(0x281a0c), dt * 0.55);
+        this.scene.background.lerp(_dawnBgColor, dt * 0.55);
       }
       if (this.scene.fog instanceof THREE.FogExp2) {
-        this.scene.fog.color.lerp(new THREE.Color(0x2c1d0d), dt * 0.6);
+        this.scene.fog.color.lerp(_dawnFogColor, dt * 0.6);
         this.scene.fog.density = THREE.MathUtils.damp(this.scene.fog.density, 0.028, 1.1, dt);
       }
 
@@ -1039,6 +1620,9 @@ export class MokshaGameEngine {
 
       this.flashlight.viewGroup.visible = false;
       this.flashlight.spotLight.intensity = 0;
+      this.flashlight.beamMesh.visible = false;
+      this.flashlight.innerBeamMesh.visible = false;
+      this.flashlight.beamDustPoints.visible = false;
       this.hudThrottle += dt;
       if (this.hudThrottle > 0.08) {
         this.hudThrottle = 0;
@@ -1131,6 +1715,8 @@ export class MokshaGameEngine {
           item.flameMesh.scale.set(1, s, 1);
         }
         if (!item.collected) {
+          item.group.position.y = item.position.y + Math.sin(timeSec * 2.6 + item.position.x) * 0.032;
+          item.group.rotation.y = timeSec * 0.55;
           const d = Math.hypot(this.playerPos.x - item.position.x, this.playerPos.z - item.position.z);
           if (d < nearestUncollectedDist) {
             nearestUncollectedDist = d;
@@ -1150,7 +1736,18 @@ export class MokshaGameEngine {
       }
     }
 
-    // Movement + Stamina
+    // Cooldowns & transient timers
+    if (this.attackCooldown > 0) {
+      this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    }
+    if (this.headroomBlockedTimer > 0) {
+      this.headroomBlockedTimer = Math.max(0, this.headroomBlockedTimer - dt);
+    }
+    if (this.attackHitFlash > 0) {
+      this.attackHitFlash = Math.max(0, this.attackHitFlash - dt * 2.8);
+    }
+
+    // Movement + Stamina + Stance Physics (Standing / Crouch / Prone + Jump)
     let moveForward = 0;
     let moveRight = 0;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) moveForward += 1;
@@ -1162,6 +1759,7 @@ export class MokshaGameEngine {
     moveRight += this.touchInput.moveX;
 
     const wantsSprint =
+      this.stance === 'standing' &&
       (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchInput.sprint) &&
       (Math.abs(moveForward) > 0.1 || Math.abs(moveRight) > 0.1) &&
       !this.hidingAlmirah;
@@ -1172,6 +1770,33 @@ export class MokshaGameEngine {
     } else {
       this.stamina = Math.min(100, this.stamina + config.staminaRegenPerSec * dt);
     }
+
+    // Vertical Jump & Gravity Physics
+    if (!this.hidingAlmirah) {
+      if (!this.isGrounded || this.playerVelY > 0) {
+        this.playerFeetY += this.playerVelY * dt;
+        this.playerVelY -= GRAVITY * dt;
+        if (this.playerFeetY <= 0) {
+          const impactSpeed = Math.abs(this.playerVelY);
+          this.playerFeetY = 0;
+          this.playerVelY = 0;
+          this.isGrounded = true;
+          this.landingDip = -Math.min(0.16, 0.07 + impactSpeed * 0.015);
+          this.audio.playJumpLand(Math.min(1.2, impactSpeed / 5.0));
+          if (!inGracePeriod) {
+            this.ghostAI.notifyNoise(this.playerPos, config.hearingRange * 0.72, this.stealthFactor);
+          }
+        }
+      }
+    } else {
+      this.playerFeetY = 0;
+      this.playerVelY = 0;
+      this.isGrounded = true;
+    }
+
+    const bodyHeight = this.getTargetBodyHeight(this.stance);
+    const stanceSpeedMult =
+      this.stance === 'prone' ? 0.35 : this.stance === 'crouching' ? 0.6 : 1.0;
 
     let isMoving = false;
     const roomNow = this.world.getRoomName(this.playerPos.x, this.playerPos.z);
@@ -1187,19 +1812,60 @@ export class MokshaGameEngine {
         _right.set(Math.cos(this.playerYaw), 0, -Math.sin(this.playerYaw));
         _move.set(0, 0, 0).addScaledVector(_fwd, nf).addScaledVector(_right, nr);
 
-        const speed = isSprinting ? config.playerSprintSpeed : config.playerWalkSpeed;
+        const baseSpeed = isSprinting ? config.playerSprintSpeed : config.playerWalkSpeed;
+        const speed = baseSpeed * stanceSpeedMult;
         this.playerPos.addScaledVector(_move, speed * dt);
-        this.world.resolvePlayerCollision(this.playerPos, 0.34);
+        this.world.resolvePlayerCollision(this.playerPos, 0.34, this.playerFeetY, bodyHeight);
 
-        this.walkBobPhase += dt * (isSprinting ? 13.5 : 8.5);
-        this.footstepCooldown -= dt;
-        if (this.footstepCooldown <= 0) {
-          this.audio.playFootstep(isSprinting, roomNow === 'Central Aangan');
-          this.footstepCooldown = isSprinting ? 0.3 : 0.46;
-          if (isSprinting && !inGracePeriod) {
-            this.ghostAI.notifyNoise(this.playerPos, config.hearingRange);
+        if (this.isGrounded) {
+          this.walkBobPhase += dt * (isSprinting ? 13.5 : this.stance === 'prone' ? 5.2 : this.stance === 'crouching' ? 6.8 : 8.5);
+          this.footstepCooldown -= dt;
+          if (this.footstepCooldown <= 0) {
+            if (this.stance === 'prone') {
+              this.audio.playStanceShift(true);
+              this.footstepCooldown = 0.74;
+            } else {
+              this.audio.playFootstep(isSprinting, roomNow === 'Central Aangan');
+              this.footstepCooldown = isSprinting ? 0.3 : this.stance === 'crouching' ? 0.62 : 0.46;
+            }
+            if (isSprinting && !inGracePeriod) {
+              this.ghostAI.notifyNoise(this.playerPos, config.hearingRange, this.stealthFactor);
+            }
           }
         }
+      }
+    }
+
+    // Evaluate real environmental stealth (Almirah / Prone under Furniture / Corner Crouch Cover)
+    const torchLit = this.flashlightOn && !this.hidingAlmirah;
+    if (this.hidingAlmirah) {
+      this.stealthReason = 'almirah';
+      this.isConcealed = !this.flashlightOn;
+      this.stealthFactor = this.flashlightOn ? 0.8 : 0.25;
+    } else {
+      const cover = this.world.evaluateStealthCover(
+        this.playerPos.x,
+        this.playerPos.z,
+        this.stance,
+        this.coverScratch
+      );
+      if (cover.underFurniture) {
+        this.stealthReason = 'furniture';
+        this.isConcealed = !torchLit;
+        this.stealthFactor = torchLit ? 0.55 : 0.25; // 75% detection radius reduction!
+      } else if (cover.nearCover && (this.stance === 'crouching' || this.stance === 'prone')) {
+        this.stealthReason = 'corner';
+        this.isConcealed = !torchLit;
+        this.stealthFactor = torchLit ? 0.62 : 0.25; // 75% detection radius reduction!
+      } else {
+        this.stealthReason = 'none';
+        this.isConcealed = false;
+        this.stealthFactor =
+          this.stance === 'prone'
+            ? torchLit ? 0.78 : 0.45
+            : this.stance === 'crouching'
+              ? torchLit ? 0.88 : 0.62
+              : 1.0;
       }
     }
 
@@ -1213,22 +1879,59 @@ export class MokshaGameEngine {
       this.breathTimer = isSprinting || panic > 0.65 ? 0.62 : this.hidingAlmirah ? 1.15 : 1.75;
     }
 
-    const bobY = isMoving
-      ? Math.sin(this.walkBobPhase) * (isSprinting ? 0.055 : 0.03)
-      : Math.sin(timeSec * 1.8) * 0.006;
-    const baseHeight = this.hidingAlmirah ? 1.54 : 1.65;
-    this.camera.position.set(this.playerPos.x, baseHeight + bobY, this.playerPos.z);
+    // Smooth eye-height interpolation (1.70m -> 1.00m -> 0.45m) + landing dip + bob
+    const targetEye = this.hidingAlmirah ? 1.54 : this.getTargetEyeHeight(this.stance);
+    this.currentEyeHeight = THREE.MathUtils.damp(this.currentEyeHeight, targetEye, 10.5, dt);
+    this.landingDip = THREE.MathUtils.damp(this.landingDip, 0, 12.0, dt);
+
+    const bobAmp =
+      !this.isGrounded
+        ? 0
+        : isMoving
+          ? isSprinting
+            ? 0.055
+            : this.stance === 'prone'
+              ? 0.014
+              : this.stance === 'crouching'
+                ? 0.02
+                : 0.03
+          : 0.006;
+    const bobY = !this.isGrounded
+      ? 0
+      : isMoving
+        ? Math.sin(this.walkBobPhase) * bobAmp
+        : Math.sin(timeSec * 1.8) * bobAmp;
+
+    const finalCamY = Math.max(0.32, this.playerFeetY + this.currentEyeHeight + this.landingDip + bobY);
+    this.playerPos.y = finalCamY;
+    this.camera.position.set(this.playerPos.x, finalCamY, this.playerPos.z);
+
+    // Smoothly damp Torch Bash camera recoil, turn inertia lag & interaction impulse
+    this.attackRecoilPitch = THREE.MathUtils.damp(this.attackRecoilPitch, 0, 11, dt);
+    this.attackRecoilRoll = THREE.MathUtils.damp(this.attackRecoilRoll, 0, 11, dt);
+    this.lookLagYaw = THREE.MathUtils.damp(this.lookLagYaw, 0, 10.5, dt);
+    this.lookLagPitch = THREE.MathUtils.damp(this.lookLagPitch, 0, 10.5, dt);
+    this.interactImpulse = THREE.MathUtils.damp(this.interactImpulse, 0, 9.0, dt);
 
     const shakeAmp = this.proximityIntensity > 0.55 ? (this.proximityIntensity - 0.55) * 0.025 : 0;
+    const stanceTilt = this.stance === 'prone' ? 0.018 : 0;
+    const breathPitch = !isMoving && this.isGrounded ? Math.sin(timeSec * 1.85) * 0.0045 : 0;
+    const interactCamPitch = -this.interactImpulse * 0.024;
     _euler.set(
-      this.playerPitch + (Math.random() - 0.5) * shakeAmp,
+      this.playerPitch +
+        this.attackRecoilPitch +
+        breathPitch +
+        interactCamPitch +
+        (Math.random() - 0.5) * shakeAmp,
       this.playerYaw + (Math.random() - 0.5) * shakeAmp,
-      isMoving ? Math.cos(this.walkBobPhase * 0.5) * 0.012 : 0,
+      (isMoving && this.isGrounded ? Math.cos(this.walkBobPhase * 0.5) * (isSprinting ? 0.018 : 0.011) : 0) +
+        this.attackRecoilRoll +
+        stanceTilt,
       'YXZ'
     );
     this.camera.quaternion.setFromEuler(_euler);
 
-    // Flashlight battery & proximity flickering
+    // Flashlight battery & proximity flickering + Vintage Torch Bash animation & Golden Holy Spark VFX
     if (this.flashlightOn) {
       this.battery = Math.max(0, this.battery - config.batteryDrainPerSec * dt);
       if (this.battery <= 0) {
@@ -1239,11 +1942,130 @@ export class MokshaGameEngine {
       this.battery = Math.min(100, this.battery + 0.65 * dt);
     }
 
+    let bashOffX = 0;
+    let bashOffY = 0;
+    let bashOffZ = 0;
+    let bashRotX = 0;
+    let bashRotY = 0;
+    let bashRotZ = 0;
+
+    if (this.attackAnimActive) {
+      this.attackAnimTime += dt;
+      const p = Math.min(1, this.attackAnimTime / ATTACK_ANIM_DURATION);
+
+      if (p < 0.24) {
+        // Quick wind-up pull back to the right
+        const t = p / 0.24;
+        bashOffX = t * 0.09;
+        bashOffY = t * 0.07;
+        bashOffZ = t * 0.08;
+        bashRotX = t * 0.35;
+        bashRotY = -t * 0.35;
+        bashRotZ = -t * 0.28;
+      } else if (p < 0.52) {
+        // Visceral forward bash arc across center view
+        const t = (p - 0.24) / 0.28;
+        const ease = 1 - Math.pow(1 - t, 3);
+        bashOffX = 0.09 - ease * 0.34;
+        bashOffY = 0.07 + Math.sin(ease * Math.PI) * 0.08 - ease * 0.04;
+        bashOffZ = 0.08 - ease * 0.36;
+        bashRotX = 0.35 - ease * 1.15;
+        bashRotY = -0.35 + ease * 0.92;
+        bashRotZ = -0.28 + ease * 0.72;
+      } else {
+        // Smooth damped recovery back to ready grip
+        const t = (p - 0.52) / 0.48;
+        const inv = 1 - t * t * (3 - 2 * t);
+        bashOffX = -0.25 * inv;
+        bashOffY = 0.03 * inv;
+        bashOffZ = -0.28 * inv;
+        bashRotX = -0.8 * inv;
+        bashRotY = 0.57 * inv;
+        bashRotZ = 0.44 * inv;
+      }
+
+      // Golden Holy Spark burst at bash peak (stronger on hit, subtle ward gleam on swing!)
+      const sparkWindow = p > 0.2 && p < 0.78 ? Math.sin(((p - 0.2) / 0.58) * Math.PI) : 0;
+      const sparkIntensity = this.attackLandedHit ? sparkWindow : sparkWindow * 0.48;
+      if (sparkIntensity > 0.02) {
+        this.flashlight.sparkGroup.visible = true;
+        const expand = (p - 0.2) / 0.58;
+        const coreScale = (this.attackLandedHit ? 1.45 : 0.75) * (0.55 + sparkWindow * 0.95);
+        this.flashlight.sparkCoreMesh.scale.setScalar(coreScale);
+        this.flashlight.sparkCoreMesh.rotation.z = timeSec * 14;
+        this.flashlight.sparkCoreMat.opacity = Math.min(0.95, sparkIntensity * 1.1);
+        this.flashlight.sparkRayMat.opacity = Math.min(0.92, sparkIntensity);
+        this.flashlight.sparkLight.intensity = sparkIntensity * (this.attackLandedHit ? 7.5 : 3.2);
+
+        const rayReach = (this.attackLandedHit ? 0.28 : 0.14) * expand;
+        for (let r = 0; r < this.flashlight.sparkRays.length; r++) {
+          const ray = this.flashlight.sparkRays[r];
+          ray.mesh.position.set(
+            ray.dir.x * rayReach,
+            ray.dir.y * rayReach,
+            ray.dir.z * rayReach
+          );
+          ray.mesh.scale.set(1, 1, 0.7 + sparkWindow * 1.3);
+        }
+      } else {
+        this.flashlight.sparkGroup.visible = false;
+        this.flashlight.sparkLight.intensity = 0;
+      }
+
+      if (p >= 1) {
+        this.attackAnimActive = false;
+        this.flashlight.sparkGroup.visible = false;
+        this.flashlight.sparkLight.intensity = 0;
+      }
+    }
+
+    // Procedural FPS Vintage Flashlight kinematics: breathing sway, stance/sprint bob, look inertia lag, interaction tilt & Torch Bash
+    const idleBreathX = Math.cos(timeSec * 0.925) * 0.0042;
+    const idleBreathY = Math.sin(timeSec * 1.85) * 0.0055;
+    const handBobAmpX = isMoving && this.isGrounded ? (isSprinting ? 0.024 : this.stance === 'prone' ? 0.007 : 0.013) : 0;
+    const handBobAmpY = isMoving && this.isGrounded ? (isSprinting ? 0.028 : this.stance === 'prone' ? 0.008 : 0.015) : 0;
+    const handBobX = isMoving && this.isGrounded ? Math.cos(this.walkBobPhase * 0.5) * handBobAmpX : 0;
+    const handBobY = isMoving && this.isGrounded ? Math.abs(Math.sin(this.walkBobPhase * 0.5)) * handBobAmpY : 0;
+    const jumpHandDrop = !this.isGrounded ? Math.max(-0.045, Math.min(0.035, -this.playerVelY * 0.006)) : 0;
+
+    const lagOffX = -this.lookLagYaw * 0.22;
+    const lagOffY = this.lookLagPitch * 0.16;
+    const lagRotY = -this.lookLagYaw * 0.58;
+    const lagRotX = this.lookLagPitch * 0.45;
+    const lagRotZ = this.lookLagYaw * 0.35;
+
+    const interactOffZ = -this.interactImpulse * 0.055;
+    const interactOffY = -this.interactImpulse * 0.025;
+    const interactRotX = -this.interactImpulse * 0.22;
+    const interactRotZ = -this.interactImpulse * 0.15;
+
     this.flashlight.viewGroup.visible = !this.hidingAlmirah;
     this.flashlight.viewGroup.position.set(
-      0.28 + (isMoving ? Math.cos(this.walkBobPhase * 0.5) * 0.014 : 0),
-      -0.22 + (isMoving ? Math.abs(Math.sin(this.walkBobPhase * 0.5)) * 0.016 : 0),
-      -0.44
+      0.28 + idleBreathX + handBobX + lagOffX + bashOffX,
+      -0.22 +
+        idleBreathY +
+        handBobY +
+        jumpHandDrop +
+        this.landingDip * 0.35 +
+        lagOffY +
+        interactOffY +
+        (this.stance === 'prone' ? 0.03 : 0) +
+        bashOffY,
+      -0.44 + interactOffZ + bashOffZ
+    );
+    this.flashlight.viewGroup.rotation.set(
+      0.06 + lagRotX + interactRotX + (isSprinting ? -0.07 : 0) + bashRotX,
+      -0.09 + lagRotY + bashRotY,
+      0.05 + lagRotZ + interactRotZ + (isMoving && this.isGrounded ? handBobX * 1.4 : 0) + bashRotZ
+    );
+
+    // Smoothly slide the metallic power switch nub on top of the torch
+    const targetSwitchZ = this.flashlightOn ? -0.068 : -0.044;
+    this.flashlight.switchNub.position.z = THREE.MathUtils.damp(
+      this.flashlight.switchNub.position.z,
+      targetSwitchZ,
+      18,
+      dt
     );
 
     if (this.flashlightOn && !this.hidingAlmirah) {
@@ -1254,16 +2076,26 @@ export class MokshaGameEngine {
         flicker = Math.random() < cutoutChance ? 0.1 : 0.58 + Math.abs(harsh) * 0.55;
       }
       const lowBatFactor = this.battery < 18 ? 0.55 + (this.battery / 18) * 0.45 : 1;
-      this.flashlight.spotLight.intensity = 8.0 * flicker * lowBatFactor;
-      this.flashlight.beamMesh.visible = flicker > 0.25;
-      this.flashlight.lensMat.emissiveIntensity = 1.5 * flicker;
+      const beamOn = flicker > 0.25;
+      this.flashlight.spotLight.intensity = 8.6 * flicker * lowBatFactor;
+      this.flashlight.beamMesh.visible = beamOn;
+      this.flashlight.innerBeamMesh.visible = beamOn;
+      this.flashlight.beamDustPoints.visible = beamOn;
+      this.flashlight.lensMat.emissiveIntensity = 1.65 * flicker;
+      this.flashlight.bulbMat.color.setHex(beamOn ? 0xfff3d4 : 0x554430);
+      if (beamOn) {
+        this.flashlight.updateBeamDust(dt, timeSec, highDetail);
+      }
     } else {
       this.flashlight.spotLight.intensity = 0;
       this.flashlight.beamMesh.visible = false;
+      this.flashlight.innerBeamMesh.visible = false;
+      this.flashlight.beamDustPoints.visible = false;
       this.flashlight.lensMat.emissiveIntensity = 0.05;
+      this.flashlight.bulbMat.color.setHex(0x3a3228);
     }
 
-    // Update Ghost AI (scaled by current Chapter intensity)
+    // Update Ghost AI (scaled by current Chapter intensity + real stealth detection reduction + High/Low cloth wave)
     const climaxActive = this.phase === 'climax';
     const chapterConfig = this.getChapterScaledConfig();
     const ghostRes = this.ghostAI.update(
@@ -1271,11 +2103,14 @@ export class MokshaGameEngine {
       timeSec,
       this.playerPos,
       this.camera.quaternion,
-      this.flashlightOn && !this.hidingAlmirah,
+      torchLit,
       this.hidingAlmirah !== null,
       climaxActive,
       inGracePeriod,
-      chapterConfig
+      chapterConfig,
+      this.stealthFactor,
+      this.isConcealed,
+      highDetail
     );
 
     this.proximityIntensity = THREE.MathUtils.damp(
@@ -1547,6 +2382,41 @@ export class MokshaGameEngine {
         ? Math.max(0, Math.ceil(config.spawnGracePeriod - this.elapsedSeconds))
         : 0;
 
+    // Build optional Enemy Health Bar payload automatically for mortal bosses / shadow guardians / rakshasas
+    let activeEnemyHud: ActiveEnemyHudState | null = null;
+    if (
+      this.activeCombatEnemy &&
+      this.activeCombatEnemy.isBossOrMortal &&
+      !this.activeCombatEnemy.isDefeated
+    ) {
+      activeEnemyHud = {
+        id: this.activeCombatEnemy.id,
+        name: this.activeCombatEnemy.name,
+        hindiName: this.activeCombatEnemy.hindiName,
+        hp: Math.max(0, Math.round(this.activeCombatEnemy.hp)),
+        maxHp: Math.max(1, Math.round(this.activeCombatEnemy.maxHp)),
+        staggered: this.activeCombatEnemy.isStaggered,
+      };
+    } else {
+      // Auto-detect any nearby mortal boss/monster within 14m
+      for (let i = 0; i < this.combatEnemies.length; i++) {
+        const e = this.combatEnemies[i];
+        if (!e.isBossOrMortal || e.isDefeated) continue;
+        const d = Math.hypot(e.position.x - this.playerPos.x, e.position.z - this.playerPos.z);
+        if (d < 14) {
+          activeEnemyHud = {
+            id: e.id,
+            name: e.name,
+            hindiName: e.hindiName,
+            hp: Math.max(0, Math.round(e.hp)),
+            maxHp: Math.max(1, Math.round(e.maxHp)),
+            staggered: e.isStaggered,
+          };
+          break;
+        }
+      }
+    }
+
     this.onHudUpdate({
       phase: this.phase,
       chapter: this.currentChapter,
@@ -1580,6 +2450,14 @@ export class MokshaGameEngine {
       objectiveText: this.buildObjectiveText(),
       graceRemaining,
       mapData: this.buildMinimapData(),
+      stance: this.stance,
+      isConcealed: this.isConcealed,
+      stealthReason: this.stealthReason,
+      attackCooldownRemaining: this.attackCooldown,
+      attackCooldownTotal: ATTACK_COOLDOWN_SEC,
+      attackHitFlash: this.attackHitFlash,
+      headroomBlocked: this.headroomBlockedTimer > 0,
+      activeCombatEnemy: activeEnemyHud,
     });
   }
 
