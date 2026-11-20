@@ -21,6 +21,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
   const diffConfig = DIFFICULTY_CONFIGS[difficulty];
   const chapterMeta = CHAPTER_CONFIGS[chapter];
   const isOutdoor = chapterMeta.environment === 'outdoor';
+  const isForest = chapterMeta.environment === 'forest';
 
   return (
     <div
@@ -75,7 +76,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
           </div>
 
           {/* Dynamic Campaign Roadmap Strip */}
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
             {CHAPTER_LIST.map((ch) => {
               const active = ch.id === chapter;
               return (
@@ -103,9 +104,11 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
             <div className="flex items-center gap-1.5">
               <MapIcon className="w-3.5 h-3.5 text-[#f3bd60] shrink-0" />
               <span>
-                {isOutdoor
-                  ? 'Golden pin = Next Objective · Jump over Thorns & Black Scorpions · Auto Checkpoints'
-                  : 'Red diamond = Ghost · Amber dot = Task · Tap Radar to expand'}
+                {isForest
+                  ? 'Crouch behind logs to evade Shadow Crawlers · Equip Trishul at Shiva Shrine · Shatter 3 Runes & defeat Aghori Dwarpal'
+                  : isOutdoor
+                    ? 'Golden pin = Next Objective · Jump over Thorns & Black Scorpions · Auto Checkpoints'
+                    : 'Red diamond = Ghost · Amber dot = Task · Tap Radar to expand'}
               </span>
             </div>
             <div className="flex items-center gap-1.5 text-[#7cc2cd]">

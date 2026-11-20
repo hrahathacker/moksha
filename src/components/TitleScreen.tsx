@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Volume2, VolumeX, Play, Flame, BookOpen, Check, Maximize, Minimize } from 'lucide-react';
+import { Volume2, VolumeX, Play, Flame, BookOpen, Check, Maximize, Minimize, Music } from 'lucide-react';
 import { CHAPTER_CONFIGS, CHAPTER_LIST, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
 import {
   ChapterNumber,
@@ -16,6 +16,8 @@ interface TitleScreenProps {
   completedChapters: ChapterNumber[];
   isTouchDevice: boolean;
   isFullscreen?: boolean;
+  titleBgmBlocked?: boolean;
+  onStartTitleBgm?: () => void;
   onSelectChapter: (c: ChapterNumber) => void;
   onChangeDifficulty: (d: Difficulty) => void;
   onChangeQuality: (q: GraphicsQuality) => void;
@@ -33,6 +35,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   completedChapters,
   isTouchDevice,
   isFullscreen = false,
+  titleBgmBlocked = false,
+  onStartTitleBgm,
   onSelectChapter,
   onChangeDifficulty,
   onChangeQuality,
@@ -89,6 +93,18 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
+            {titleBgmBlocked && onStartTitleBgm && (
+              <button
+                type="button"
+                onClick={onStartTitleBgm}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-sm border border-[#e5a94c]/60 bg-[#1a1208]/85 text-[#f4c974] hover:text-white hover:border-[#f4c974] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                aria-label="Play home screen intro music"
+              >
+                <Music className="w-3.5 h-3.5" />
+                <span>Play Intro Music</span>
+              </button>
+            )}
+
             {onToggleFullscreen && (
               <button
                 type="button"
@@ -190,7 +206,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="sm:col-span-6 p-3.5 lg:p-5 rounded-sm border border-white/12 space-y-3 lg:space-y-4"
             style={{ backgroundColor: 'rgba(8, 15, 18, 0.84)' }}
           >
-            {/* Dynamic 6-Chapter Campaign Selector (All Selectable Anytime) */}
+            {/* Dynamic 7-Chapter Campaign Selector (All Selectable Anytime) */}
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2 text-[11px] lg:text-xs text-[#8ea2a5]">
                 <span>Campaign ({TOTAL_CHAPTERS} Chapters)</span>
@@ -198,7 +214,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   Ch {selectedChapter}: {activeChapter.title}
                 </span>
               </div>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
                 {CHAPTER_LIST.map((ch) => {
                   const selected = selectedChapter === ch.id;
                   const done = completedChapters.includes(ch.id);

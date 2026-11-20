@@ -34,8 +34,9 @@ import {
   HudSnapshot,
 } from './game/types';
 
-const COMPLETED_STORAGE_KEY = 'moksha_completed_chapters_v2';
+const COMPLETED_STORAGE_KEY = 'moksha_completed_chapters_v3';
 const TOUCH_SENS_STORAGE_KEY = 'moksha_touch_sens_v1';
+const HOME_INTRO_SONG_URL = '/assets/aistudio/MOKSHA__Game_Intro_Rap__Chaurasi_Fix__2d20d95d.mp3';
 
 function loadTouchSensitivity(): number {
   try {
@@ -68,6 +69,7 @@ const INITIAL_HUD: HudSnapshot = {
   stamina: 100,
   battery: 100,
   flashlightOn: true,
+  trishulEquipped: false,
   bpm: 72,
   maxBpm: 72,
   isHiding: false,
@@ -125,10 +127,12 @@ function loadCompletedChapters(): ChapterNumber[] {
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<MokshaGameEngine | null>(null);
+  const titleBgmRef = useRef<HTMLAudioElement | null>(null);
   const draggingLookRef = useRef(false);
   const lastDragPosRef = useRef({ x: 0, y: 0 });
   const victorySongAutoStartedRef = useRef(false);
 
+  const [titleBgmBlocked, setTitleBgmBlocked] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [isPortraitMobile, setIsPortraitMobile] = useState(false);
   const [dismissPortraitGate, setDismissPortraitGate] = useState(false);
@@ -323,6 +327,98 @@ export default function App() {
     }
   }, [hud.phase]);
 
+  // Create persistent looping Home Screen Intro Rap audio element
+  useEffect(() => {
+    const bgm = new Audio(HOME_INTRO_SONG_URL);
+    bgm.loop = true;
+    bgm.preload = 'auto';
+    titleBgmRef.current = bgm;
+    return () => {
+      bgm.pause();
+      bgm.currentTime = 0;
+      bgm.src = '';
+      titleBgmRef.current = null;
+    };
+  }, []);
+
+  // Play/loop Home Intro Song on Title screen, sync volume/mute, and stop cleanly when entering game
+  useEffect(() => {
+    const bgm = titleBgmRef.current;
+    if (!bgm) return;
+
+    const targetVol = settings.muted ? 0 : Math.max(0, Math.min(1, settings.volume * 0.78));
+    bgm.volume = targetVol;
+    bgm.muted = settings.muted;
+
+    if (hud.phase !== 'title') {
+      bgm.pause();
+      bgm.currentTime = 0;
+      setTitleBgmBlocked(false);
+      return;
+    }
+
+    if (settings.muted || targetVol <= 0.001) {
+      bgm.pause();
+      setTitleBgmBlocked(false);
+      return;
+    }
+
+    let cancelled = false;
+    const tryPlay = () => {
+      if (cancelled || document.hidden) return;
+      const playPromise = bgm.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise
+          .then(() => {
+            if (!cancelled) setTitleBgmBlocked(false);
+          })
+          .catch(() => {
+            if (!cancelled) setTitleBgmBlocked(true);
+          });
+      }
+    };
+
+    tryPlay();
+
+    const unlockOnGesture = () => {
+      if (bgm.paused && !settings.muted && hud.phase === 'title') {
+        tryPlay();
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        bgm.pause();
+      } else if (hud.phase === 'title' && !settings.muted) {
+        tryPlay();
+      }
+    };
+
+    window.addEventListener('pointerdown', unlockOnGesture, { capture: true, passive: true });
+    window.addEventListener('touchstart', unlockOnGesture, { capture: true, passive: true });
+    window.addEventListener('keydown', unlockOnGesture, { capture: true });
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pointerdown', unlockOnGesture, true);
+      window.removeEventListener('touchstart', unlockOnGesture, true);
+      window.removeEventListener('keydown', unlockOnGesture, true);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [hud.phase, settings.muted, settings.volume]);
+
+  const handleStartTitleBgm = useCallback(() => {
+    const bgm = titleBgmRef.current;
+    if (!bgm || hud.phase !== 'title' || settings.muted) return;
+    bgm.volume = Math.max(0, Math.min(1, settings.volume * 0.78));
+    bgm.muted = false;
+    void bgm
+      .play()
+      .then(() => setTitleBgmBlocked(false))
+      .catch(() => setTitleBgmBlocked(true));
+  }, [hud.phase, settings.muted, settings.volume]);
+
   const handleToggleFullscreen = useCallback(() => {
     void toggleFullscreenMode().then((active) => setIsFullscreen(active));
   }, []);
@@ -386,14 +482,11 @@ export default function App() {
     setMapExpanded(false);
     engineRef.current?.audio.unlock();
     engineRef.current?.audio.stopVictorySong();
+    engineRef.current?.audio.stopStoryNarration();
     if (isTouchDevice) {
       void enterAndroidLandscapeFullscreen();
     }
-    if (selectedChapter === 1) {
-      engineRef.current?.startNewGame(settings.difficulty, false, 1);
-    } else {
-      engineRef.current?.startChapterDirect(settings.difficulty, selectedChapter, true);
-    }
+    engineRef.current?.startChapterDirect(settings.difficulty, selectedChapter, true);
   }, [settings.difficulty, selectedChapter, isTouchDevice]);
 
   const handlePlayAgain = useCallback(() => {
@@ -587,6 +680,8 @@ export default function App() {
           completedChapters={completedChapters}
           isTouchDevice={isTouchDevice}
           isFullscreen={isFullscreen}
+          titleBgmBlocked={titleBgmBlocked && !settings.muted}
+          onStartTitleBgm={handleStartTitleBgm}
           onSelectChapter={setSelectedChapter}
           onChangeDifficulty={handleChangeDifficulty}
           onChangeQuality={handleChangeQuality}

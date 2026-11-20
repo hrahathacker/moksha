@@ -4,6 +4,7 @@ import { createChapter3 } from './chapter3';
 import { createChapter4 } from './chapter4';
 import { createChapter5 } from './chapter5';
 import { createChapter6 } from './chapter6';
+import { createChapter7 } from './chapter7';
 import { ChapterModule } from './types';
 import { ChapterConfig, ChapterNumber } from '../game/types';
 
@@ -18,6 +19,7 @@ const CHAPTER_FACTORIES: Record<ChapterNumber, () => ChapterModule> = {
   4: createChapter4,
   5: createChapter5,
   6: createChapter6,
+  7: createChapter7,
 };
 
 const CHAPTER_INSTANCES: Record<ChapterNumber, ChapterModule> = {
@@ -27,6 +29,7 @@ const CHAPTER_INSTANCES: Record<ChapterNumber, ChapterModule> = {
   4: CHAPTER_FACTORIES[4](),
   5: CHAPTER_FACTORIES[5](),
   6: CHAPTER_FACTORIES[6](),
+  7: CHAPTER_FACTORIES[7](),
 };
 
 export const CHAPTER_LIST: ChapterConfig[] = Object.keys(CHAPTER_INSTANCES)

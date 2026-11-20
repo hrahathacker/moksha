@@ -14,7 +14,7 @@ export type GamePhase =
 
 export type ChapterNumber = number;
 
-export type ChapterEnvironment = 'outdoor' | 'haveli';
+export type ChapterEnvironment = 'outdoor' | 'forest' | 'haveli';
 
 export type Difficulty = 'normal' | 'nightmare' | 'speedrun';
 
@@ -85,7 +85,12 @@ export interface MinimapObjective {
     | 'tulsi'
     | 'veranda'
     | 'key'
-    | 'gate';
+    | 'gate'
+    | 'shrine'
+    | 'trishul'
+    | 'rune'
+    | 'boss'
+    | 'haveli_door';
   urgent?: boolean;
 }
 
@@ -94,11 +99,23 @@ export interface MinimapLandmark {
   x: number;
   z: number;
   label: string;
-  kind: 'hut' | 'stall' | 'well' | 'shed' | 'tulsi' | 'gate' | 'hazard';
+  kind:
+    | 'hut'
+    | 'stall'
+    | 'well'
+    | 'shed'
+    | 'tulsi'
+    | 'gate'
+    | 'hazard'
+    | 'shrine'
+    | 'baoli'
+    | 'stables'
+    | 'cart'
+    | 'haveli_door';
 }
 
 export interface MinimapData {
-  mode: 'haveli' | 'outdoor';
+  mode: 'haveli' | 'outdoor' | 'forest';
   playerX: number;
   playerZ: number;
   playerYaw: number;
@@ -114,6 +131,7 @@ export interface MinimapData {
   pawTrailVisible?: boolean;
   pawTrail?: Array<{ x: number; z: number }>;
   landmarks?: MinimapLandmark[];
+  enemies?: Array<{ id: string; x: number; z: number; isBoss?: boolean }>;
 }
 
 export interface RitualItemMeta {
@@ -240,6 +258,7 @@ export interface HudSnapshot {
   attackHitFlash: number;
   headroomBlocked: boolean;
   activeCombatEnemy: ActiveEnemyHudState | null;
+  trishulEquipped: boolean;
 }
 
 export const RITUAL_ITEMS: Record<RitualItemId, RitualItemMeta> = {

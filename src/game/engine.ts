@@ -11,6 +11,7 @@ import {
   ChapterRuntimeContext,
 } from '../chapters/types';
 import { HorrorAudioManager } from './audio';
+import { ForestCourtyardWorld, buildForestCourtyardWorld } from './forestCourtyardMap';
 import { GhostAIController } from './ghostAI';
 import { HaveliWorld, StealthCoverCheck, buildHaveliWorld } from './haveliMap';
 import {
@@ -98,10 +99,12 @@ export class MokshaGameEngine {
   private textures: ProceduralTexturePack;
   private world: HaveliWorld;
   private outdoorWorld: OutdoorVillageWorld;
+  private forestWorld: ForestCourtyardWorld;
   private activeChapter: ChapterModule;
   private ghostRig: GhostRig;
   private ghostAI: GhostAIController;
   private flashlight: FlashlightRig;
+  private trishulEquipped = false;
   public readonly audio: HorrorAudioManager;
 
   private moonLight: THREE.DirectionalLight;
@@ -328,6 +331,14 @@ export class MokshaGameEngine {
     this.outdoorWorld.root.visible = false;
     this.scene.add(this.outdoorWorld.root);
 
+    this.forestWorld = buildForestCourtyardWorld(
+      this.textures,
+      initialQuality === 'low' || this.isMobile
+    );
+    this.forestWorld.applyQualityMaterials(initialQuality === 'low');
+    this.forestWorld.root.visible = false;
+    this.scene.add(this.forestWorld.root);
+
     this.activeChapter = getChapterModule(1);
 
     this.ghostRig = createGhostModel(this.textures);
@@ -442,8 +453,8 @@ export class MokshaGameEngine {
         const pick = 1 + Math.floor(Math.random() * Math.max(1, emitters.length - 1));
         emitterPos = emitters[Math.min(pick, emitters.length - 1)];
       }
-      // Also mix in lit Chapter 2 shrine diyas when active
-      if (!climaxBoost && this.currentChapter === 2 && Math.random() < 0.25) {
+      // Also mix in lit Chapter 3 shrine diyas when active
+      if (!climaxBoost && this.currentChapter === 3 && Math.random() < 0.25) {
         const litDiyas = this.world.shrineDiyas;
         for (let k = 0; k < litDiyas.length; k++) {
           const candidate = litDiyas[(index + k) % litDiyas.length];
@@ -579,21 +590,18 @@ export class MokshaGameEngine {
     this.applyShadowQuality();
     this.world.applyQualityMaterials(isLow);
     this.outdoorWorld.applyQualityMaterials(isLow);
+    this.forestWorld.applyQualityMaterials(isLow);
     this.dustParticles.visible = true;
     this.dustParticles.geometry.setDrawRange(0, isLow ? DUST_LOW_COUNT : DUST_HIGH_COUNT);
     this.emberPoints.geometry.setDrawRange(0, isLow ? EMBER_LOW_COUNT : EMBER_HIGH_COUNT);
     if (this.scene.fog instanceof THREE.FogExp2) {
-      const isOutdoorActive =
-        this.phase !== 'title' &&
-        this.phase !== 'story' &&
-        this.activeChapter.config.environment === 'outdoor';
-      this.scene.fog.density = isOutdoorActive
-        ? isLow
-          ? 0.044
-          : 0.036
-        : isLow
-          ? FOG_DENSITY_LOW
-          : FOG_DENSITY_HIGH;
+      if (this.isForestActive()) {
+        this.scene.fog.density = isLow ? 0.046 : 0.038;
+      } else if (this.isVillageOutdoor()) {
+        this.scene.fog.density = isLow ? 0.044 : 0.036;
+      } else {
+        this.scene.fog.density = isLow ? FOG_DENSITY_LOW : FOG_DENSITY_HIGH;
+      }
     }
   }
 
@@ -650,7 +658,7 @@ export class MokshaGameEngine {
     return out;
   }
 
-  private isOutdoorActive(): boolean {
+  private isVillageOutdoor(): boolean {
     return (
       this.phase !== 'title' &&
       this.phase !== 'story' &&
@@ -658,14 +666,30 @@ export class MokshaGameEngine {
     );
   }
 
+  private isForestActive(): boolean {
+    return (
+      this.phase !== 'title' &&
+      this.phase !== 'story' &&
+      this.activeChapter.config.environment === 'forest'
+    );
+  }
+
+  private isOutdoorActive(): boolean {
+    return this.isVillageOutdoor() || this.isForestActive();
+  }
+
   private syncEnvironmentVisibility(): void {
-    const isOutdoor = this.isOutdoorActive();
+    const isVillage = this.isVillageOutdoor();
+    const isForest = this.isForestActive();
+    const isOutdoor = isVillage || isForest;
+
     this.world.root.visible = !isOutdoor;
-    this.outdoorWorld.root.visible = isOutdoor;
+    this.outdoorWorld.root.visible = isVillage;
+    this.forestWorld.root.visible = isForest;
     this.ghostRig.root.visible = !isOutdoor;
     this.emberPoints.visible = !isOutdoor;
 
-    const targetFar = isOutdoor ? 84 : 48;
+    const targetFar = isForest ? 92 : isVillage ? 84 : 48;
     if (this.camera.far !== targetFar) {
       this.camera.far = targetFar;
       this.camera.updateProjectionMatrix();
@@ -674,21 +698,25 @@ export class MokshaGameEngine {
     const isLow = this.quality === 'low';
     this.hemiLight.color.setHex(COLD_TEAL_HEMI_SKY);
     this.hemiLight.groundColor.setHex(COLD_TEAL_HEMI_GROUND);
-    this.hemiLight.intensity = isOutdoor ? 0.78 : 0.62;
+    this.hemiLight.intensity = isForest ? 0.68 : isVillage ? 0.78 : 0.62;
     this.moonLight.color.setHex(COLD_TEAL_MOON);
-    this.moonLight.intensity = isOutdoor ? 1.56 : 1.38;
+    this.moonLight.intensity = isForest ? 1.44 : isVillage ? 1.56 : 1.38;
     if (this.scene.background instanceof THREE.Color) {
       this.scene.background.setHex(COLD_TEAL_BG);
     }
     if (this.scene.fog instanceof THREE.FogExp2) {
       this.scene.fog.color.setHex(COLD_TEAL_BG);
-      this.scene.fog.density = isOutdoor
+      this.scene.fog.density = isForest
         ? isLow
-          ? 0.044
-          : 0.036
-        : isLow
-          ? FOG_DENSITY_LOW
-          : FOG_DENSITY_HIGH;
+          ? 0.046
+          : 0.038
+        : isVillage
+          ? isLow
+            ? 0.044
+            : 0.036
+          : isLow
+            ? FOG_DENSITY_LOW
+            : FOG_DENSITY_HIGH;
     }
   }
 
@@ -697,6 +725,7 @@ export class MokshaGameEngine {
     return {
       world: this.world,
       outdoorWorld: this.outdoorWorld,
+      forestWorld: this.forestWorld,
       ghostAI: this.ghostAI,
       audio: this.audio,
       playerPos: this.playerPos,
@@ -711,6 +740,15 @@ export class MokshaGameEngine {
       },
       get stance() {
         return self.stance;
+      },
+      get stealthFactor() {
+        return self.stealthFactor;
+      },
+      get flashlightOn() {
+        return self.flashlightOn;
+      },
+      get trishulEquipped() {
+        return self.trishulEquipped;
       },
       get difficulty() {
         return self.difficulty;
@@ -739,6 +777,22 @@ export class MokshaGameEngine {
       },
       addPlacedItem: (id) => {
         self.placedItems.push(id);
+      },
+      setTrishulEquipped: (equipped) => {
+        self.trishulEquipped = equipped;
+        self.flashlight.setWeaponMode(equipped ? 'trishul' : 'flashlight');
+      },
+      registerCombatEnemy: (enemy) => {
+        self.registerCombatEnemy(enemy);
+      },
+      unregisterCombatEnemy: (enemyId) => {
+        self.unregisterCombatEnemy(enemyId);
+      },
+      setActiveCombatEnemy: (enemy) => {
+        self.activeCombatEnemy = enemy;
+      },
+      setProximityIntensity: (intensity) => {
+        self.proximityIntensity = Math.max(0, Math.min(1, intensity));
       },
       completeChapter: () => {
         self.completeNonFinalChapter();
@@ -814,25 +868,34 @@ export class MokshaGameEngine {
   private applyPlayerInjury(
     amount: number,
     reason: string,
-    kind: 'thorn' | 'scorpion',
+    kind: 'thorn' | 'scorpion' | 'crawler' | 'boss',
     pushX?: number,
     pushZ?: number
   ): void {
     if (this.hurtInvulnTimer > 0 || this.phase !== 'playing') return;
     this.playerHealth = Math.max(0, this.playerHealth - amount);
     this.damageFlash = 1.0;
-    this.attackRecoilPitch = 0.14;
-    this.attackRecoilRoll = kind === 'scorpion' ? 0.16 : -0.11;
+    this.attackRecoilPitch = kind === 'boss' ? 0.22 : 0.14;
+    this.attackRecoilRoll = kind === 'scorpion' || kind === 'boss' ? 0.18 : -0.11;
 
     if (kind === 'thorn') {
       this.audio.playPainThorn();
-      if (typeof pushX === 'number' && typeof pushZ === 'number') {
-        this.playerPos.x += pushX;
-        this.playerPos.z += pushZ;
+    } else if (kind === 'scorpion') {
+      this.audio.playScorpionSting();
+    } else if (kind === 'crawler') {
+      this.audio.playCrawlerScreech(true);
+    } else {
+      this.audio.playBossSlam();
+    }
+
+    if (typeof pushX === 'number' && typeof pushZ === 'number') {
+      this.playerPos.x += pushX;
+      this.playerPos.z += pushZ;
+      if (this.isForestActive()) {
+        this.forestWorld.resolvePlayerCollision(this.playerPos, 0.36);
+      } else if (this.isVillageOutdoor()) {
         this.outdoorWorld.resolvePlayerCollision(this.playerPos, 0.36);
       }
-    } else {
-      this.audio.playScorpionSting();
     }
 
     if (this.playerHealth <= 0) {
@@ -845,7 +908,7 @@ export class MokshaGameEngine {
       this.releasePointerLock();
       this.audio.setTension(0, false);
     } else {
-      this.hurtInvulnTimer = 1.5;
+      this.hurtInvulnTimer = kind === 'boss' ? 1.25 : 1.15;
     }
     this.emitHud();
   }
@@ -872,6 +935,7 @@ export class MokshaGameEngine {
     this.touchInput.moveY = 0;
     this.touchInput.sprint = false;
     this.phase = 'playing';
+    this.activeChapter.onCheckpointRevive?.(this.getChapterContext(), this.activeCheckpoint.id);
     this.audio.playTempleBell(0.45);
     this.emitHud();
     this.requestPointerLock();
@@ -904,9 +968,15 @@ export class MokshaGameEngine {
     this.cameraOverrideActive = false;
 
     const sp = this.activeChapter.getSpawn();
+    const env = this.activeChapter.config.environment;
     this.activeCheckpoint = {
       id: 'start',
-      label: this.activeChapter.config.environment === 'outdoor' ? 'Village Path Start' : 'Haveli Courtyard',
+      label:
+        env === 'outdoor'
+          ? 'Village Path Start'
+          : env === 'forest'
+            ? 'Village Outer Iron Gate'
+            : 'Haveli Courtyard',
       x: sp.x,
       z: sp.z,
       yaw: sp.yaw,
@@ -925,6 +995,9 @@ export class MokshaGameEngine {
     this.isConcealed = false;
     this.stealthReason = 'none';
     this.stealthFactor = 1.0;
+    this.trishulEquipped = false;
+    this.flashlight.setWeaponMode('flashlight');
+    this.combatEnemies = [this.ghostAI];
     this.activeCombatEnemy = null;
     this.attackCooldown = 0;
     this.attackAnimTime = 0;
@@ -976,7 +1049,7 @@ export class MokshaGameEngine {
   }
 
   /**
-   * Begins full cinematic flow: Title -> AI Story -> Unhurried Mission Briefing -> Playing
+   * Begins chapter start flow: Title -> Unhurried Mission Briefing -> Playing
    */
   public startNewGame(
     difficulty: Difficulty,
@@ -989,7 +1062,7 @@ export class MokshaGameEngine {
     this.audio.prewarmGhostVoices();
     this.resetRunState(difficulty, chapter);
 
-    this.phase = skipStoryAndBriefing ? 'playing' : 'story';
+    this.phase = skipStoryAndBriefing ? 'playing' : 'briefing';
     this.syncEnvironmentVisibility();
     this.audio.playTempleBell(0.6);
     this.emitHud();
@@ -1173,21 +1246,36 @@ export class MokshaGameEngine {
   public triggerPlayerAttack(): boolean {
     if (this.phase !== 'playing' && this.phase !== 'climax') return false;
     if (this.hidingAlmirah) return false;
-    if (this.attackCooldown > 0 || this.stamina < ATTACK_STAMINA_COST) return false;
+    const ctx = this.getChapterContext();
+    if (this.activeChapter.canPlayerAttack && !this.activeChapter.canPlayerAttack(ctx)) {
+      return false;
+    }
+
+    const isTrishul = this.trishulEquipped;
+    const staminaCost = isTrishul ? 12 : ATTACK_STAMINA_COST;
+    const cooldownSec = isTrishul ? 0.95 : ATTACK_COOLDOWN_SEC;
+    const rangeMeters = isTrishul ? 3.25 : ATTACK_RANGE_METERS;
+    const baseDamage = isTrishul ? 35 : 25;
+
+    if (this.attackCooldown > 0 || this.stamina < staminaCost) return false;
 
     this.audio.unlock();
-    this.stamina = Math.max(0, this.stamina - ATTACK_STAMINA_COST);
-    this.attackCooldown = ATTACK_COOLDOWN_SEC;
+    this.stamina = Math.max(0, this.stamina - staminaCost);
+    this.attackCooldown = cooldownSec;
     this.attackAnimActive = true;
     this.attackAnimTime = 0;
     this.attackLandedHit = false;
-    this.attackRecoilPitch = 0.065;
-    this.attackRecoilRoll = -0.055;
-    this.audio.playTorchBashSwing();
+    this.attackRecoilPitch = isTrishul ? 0.08 : 0.065;
+    this.attackRecoilRoll = isTrishul ? -0.075 : -0.055;
+    if (isTrishul) {
+      this.audio.playTrishulSwing();
+    } else {
+      this.audio.playTorchBashSwing();
+    }
 
-    // Forward 2.5m horizontal cone melee hit-check against all registered EnemyCombatEntity targets
+    // Forward horizontal cone melee hit-check against all registered EnemyCombatEntity targets
     _fwd.set(-Math.sin(this.playerYaw), 0, -Math.cos(this.playerYaw)).normalize();
-    let hitAny = false;
+    let hitAny = this.activeChapter.onPlayerMeleeSwing?.(ctx, _fwd) ?? false;
 
     for (let i = 0; i < this.combatEnemies.length; i++) {
       const enemy = this.combatEnemies[i];
@@ -1195,12 +1283,12 @@ export class MokshaGameEngine {
       if (enemy.isDefeated) continue;
       _toEnemy.set(enemy.position.x - this.playerPos.x, 0, enemy.position.z - this.playerPos.z);
       const dist = _toEnemy.length();
-      if (dist > ATTACK_RANGE_METERS) continue;
+      if (dist > rangeMeters) continue;
 
       const dot = dist > 0.001 ? (_toEnemy.x * _fwd.x + _toEnemy.z * _fwd.z) / dist : 1;
-      if (dot < ATTACK_CONE_COS && dist > 1.15) continue;
+      if (dot < ATTACK_CONE_COS && dist > 1.25) continue;
 
-      // Require clear line of sight so attacks don't strike through solid walls
+      // Require clear line of sight in indoor Haveli so attacks don't strike through solid walls
       if (
         !this.isOutdoorActive() &&
         !this.world.hasLineOfSight(this.playerPos, _toEnemy.set(enemy.position.x, 0, enemy.position.z))
@@ -1210,7 +1298,7 @@ export class MokshaGameEngine {
 
       const kbX = dist > 0.01 ? (enemy.position.x - this.playerPos.x) / dist : _fwd.x;
       const kbZ = dist > 0.01 ? (enemy.position.z - this.playerPos.z) / dist : _fwd.z;
-      const hit = enemy.takeDamage(25, { x: kbX, z: kbZ });
+      const hit = enemy.takeDamage(baseDamage, { x: kbX, z: kbZ });
       if (hit) {
         hitAny = true;
         if (enemy.isBossOrMortal) {
@@ -1600,7 +1688,20 @@ export class MokshaGameEngine {
 
     // Live 3D atmospheric camera pan during Title, Story & Briefing modals
     if (this.phase === 'title' || this.phase === 'story' || this.phase === 'briefing') {
-      if (this.isOutdoorActive()) {
+      if (this.isForestActive()) {
+        // Eerie Banyan & Peepal Forest overview facing the distant crimson-sealed Haveli Main Door
+        const sway = Math.sin(timeSec * 0.22) * 2.4;
+        this.camera.position.set(sway, 2.55 + Math.sin(timeSec * 0.45) * 0.08, 22.5);
+        this.camera.lookAt(0, 2.0, -28.0);
+        this.forestWorld.updateVisuals(dt, timeSec);
+        this.flashlight.viewGroup.visible = false;
+        this.flashlight.spotLight.intensity = 0;
+        this.flashlight.beamMesh.visible = false;
+        this.flashlight.innerBeamMesh.visible = false;
+        this.flashlight.beamDustPoints.visible = false;
+        return;
+      }
+      if (this.isVillageOutdoor()) {
         // Misty outdoor village overview facing the distant lantern-lit Haveli Gate during Ch 1 Briefing
         const sway = Math.sin(timeSec * 0.24) * 2.2;
         this.camera.position.set(sway, 2.35 + Math.sin(timeSec * 0.5) * 0.08, 17.5);
@@ -1837,10 +1938,13 @@ export class MokshaGameEngine {
     const stanceSpeedMult =
       this.stance === 'prone' ? 0.35 : this.stance === 'crouching' ? 0.6 : 1.0;
 
+    const isForest = this.isForestActive();
     let isMoving = false;
-    const roomNow = isOutdoor
-      ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
-      : this.world.getRoomName(this.playerPos.x, this.playerPos.z);
+    const roomNow = isForest
+      ? this.forestWorld.getZoneName(this.playerPos.x, this.playerPos.z)
+      : isOutdoor
+        ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
+        : this.world.getRoomName(this.playerPos.x, this.playerPos.z);
 
     if (!this.hidingAlmirah && !movementLocked) {
       const mag = Math.hypot(moveForward, moveRight);
@@ -1857,7 +1961,9 @@ export class MokshaGameEngine {
         const baseSpeed = isSprinting ? config.playerSprintSpeed : config.playerWalkSpeed;
         const speed = baseSpeed * stanceSpeedMult;
         this.playerPos.addScaledVector(_move, speed * dt);
-        if (isOutdoor) {
+        if (isForest) {
+          this.forestWorld.resolvePlayerCollision(this.playerPos, 0.36);
+        } else if (isOutdoor) {
           this.outdoorWorld.resolvePlayerCollision(this.playerPos, 0.36);
         } else {
           this.world.resolvePlayerCollision(this.playerPos, 0.34, this.playerFeetY, bodyHeight);
@@ -1894,9 +2000,28 @@ export class MokshaGameEngine {
       }
     }
 
-    // Evaluate real environmental stealth (Almirah / Prone under Furniture / Corner Crouch Cover)
+    // Evaluate real environmental stealth (Almirah / Prone under Furniture / Forest Logs & Rocks / Corner Cover)
     const torchLit = this.flashlightOn && !this.hidingAlmirah;
-    if (isOutdoor) {
+    if (isForest) {
+      const nearForestCover = this.forestWorld.isNearStealthCover(this.playerPos.x, this.playerPos.z);
+      if (nearForestCover && (this.stance === 'crouching' || this.stance === 'prone')) {
+        this.stealthReason = 'corner';
+        this.isConcealed = !torchLit;
+        this.stealthFactor = torchLit ? 0.55 : 0.28;
+      } else if (this.stance === 'prone') {
+        this.stealthReason = 'none';
+        this.isConcealed = !torchLit;
+        this.stealthFactor = torchLit ? 0.7 : 0.42;
+      } else if (this.stance === 'crouching') {
+        this.stealthReason = 'none';
+        this.isConcealed = false;
+        this.stealthFactor = torchLit ? 0.85 : 0.58;
+      } else {
+        this.stealthReason = 'none';
+        this.isConcealed = false;
+        this.stealthFactor = 1.0;
+      }
+    } else if (isOutdoor) {
       this.stealthReason = 'none';
       this.isConcealed = false;
       this.stealthFactor = 1.0;
@@ -2166,7 +2291,37 @@ export class MokshaGameEngine {
       this.flashlight.bulbMat.color.setHex(0x3a3228);
     }
 
-    if (isOutdoor) {
+    if (this.trishulEquipped && !this.cameraOverrideActive) {
+      const flamePulse = 0.86 + Math.sin(timeSec * 16.5) * 0.14 + Math.sin(timeSec * 29.0) * 0.08;
+      this.flashlight.trishulFlameMesh.scale.set(
+        0.92 + Math.sin(timeSec * 21.0) * 0.08,
+        flamePulse,
+        0.92 + Math.cos(timeSec * 19.0) * 0.08
+      );
+      this.flashlight.trishulFlameLight.intensity = 2.6 * flamePulse;
+    } else {
+      this.flashlight.trishulFlameLight.intensity = 0;
+    }
+
+    if (isForest) {
+      // Chapter 2 Forest & Boss Fight: Chapter 2 feeds proximityIntensity from Crawlers & Aghori Dwarpal
+      const targetForestBpm =
+        74 +
+        Math.round(this.proximityIntensity * 84) +
+        (isSprinting ? 14 : 0) +
+        Math.round(((100 - this.playerHealth) / 100) * 32);
+      this.bpm = THREE.MathUtils.damp(this.bpm, Math.min(176, targetForestBpm), 3.2, dt);
+      const roundedForest = Math.round(this.bpm);
+      if (roundedForest > this.maxBpm) this.maxBpm = roundedForest;
+
+      this.heartbeatTimer -= dt;
+      if (this.heartbeatTimer <= 0 && this.proximityIntensity > 0.2) {
+        this.audio.playHeartbeat(this.proximityIntensity * 0.9);
+        this.heartbeatTimer = 60 / Math.max(76, this.bpm);
+      }
+
+      this.audio.setTension(this.proximityIntensity * 0.85, this.activeCombatEnemy !== null);
+    } else if (isOutdoor) {
       // Outdoor Prologue: no indoor Haveli ghost pursuit; calm atmospheric tension + injury BPM
       this.proximityIntensity = THREE.MathUtils.damp(this.proximityIntensity, 0, 4.5, dt);
       const targetOutdoorBpm =
@@ -2288,9 +2443,44 @@ export class MokshaGameEngine {
   private buildMinimapData(): MinimapData {
     const ctx = this.getChapterContext();
     const objectives = this.activeChapter.getMinimapObjectives(ctx);
-    const isOutdoor = this.isOutdoorActive();
+    const isForest = this.isForestActive();
+    const isVillage = this.isVillageOutdoor();
 
-    if (isOutdoor) {
+    if (isForest) {
+      const enemies: Array<{ id: string; x: number; z: number; isBoss?: boolean }> = [];
+      for (let i = 0; i < this.forestWorld.crawlers.length; i++) {
+        const c = this.forestWorld.crawlers[i];
+        if (c.alive) {
+          enemies.push({ id: c.id, x: c.position.x, z: c.position.z, isBoss: false });
+        }
+      }
+      const boss = this.forestWorld.boss;
+      if (boss.state !== 'hidden' && boss.state !== 'dead') {
+        enemies.push({ id: 'aghori_dwarpal', x: boss.position.x, z: boss.position.z, isBoss: true });
+      }
+      return {
+        mode: 'forest',
+        playerX: this.playerPos.x,
+        playerZ: this.playerPos.z,
+        playerYaw: this.playerYaw,
+        ghostX: boss.state !== 'hidden' && boss.state !== 'dead' ? boss.position.x : 0,
+        ghostZ: boss.state !== 'hidden' && boss.state !== 'dead' ? boss.position.z : -99,
+        ghostYaw: boss.yaw,
+        ghostRoom: 'Outer Courtyard',
+        ghostDistance:
+          boss.state !== 'hidden' && boss.state !== 'dead'
+            ? Math.round(Math.hypot(this.playerPos.x - boss.position.x, this.playerPos.z - boss.position.z))
+            : 99,
+        objectives,
+        almirahs: [],
+        dogX: this.forestWorld.dog.position.x,
+        dogZ: this.forestWorld.dog.position.z,
+        landmarks: this.forestWorld.landmarks,
+        enemies,
+      };
+    }
+
+    if (isVillage) {
       return {
         mode: 'outdoor',
         playerX: this.playerPos.x,
@@ -2361,13 +2551,13 @@ export class MokshaGameEngine {
         maxHp: Math.max(1, Math.round(this.activeCombatEnemy.maxHp)),
         staggered: this.activeCombatEnemy.isStaggered,
       };
-    } else if (!isOutdoor) {
-      // Auto-detect any nearby mortal boss/monster within 14m
+    } else if (!this.isVillageOutdoor()) {
+      // Auto-detect any nearby mortal boss/monster within 18m (including Chapter 2 Forest & Boss)
       for (let i = 0; i < this.combatEnemies.length; i++) {
         const e = this.combatEnemies[i];
         if (!e.isBossOrMortal || e.isDefeated) continue;
         const d = Math.hypot(e.position.x - this.playerPos.x, e.position.z - this.playerPos.z);
-        if (d < 14) {
+        if (d < 18) {
           activeEnemyHud = {
             id: e.id,
             name: e.name,
@@ -2381,6 +2571,7 @@ export class MokshaGameEngine {
       }
     }
 
+    const isForest = this.isForestActive();
     this.onHudUpdate({
       phase: this.phase,
       chapter: this.currentChapter,
@@ -2401,14 +2592,17 @@ export class MokshaGameEngine {
       stamina: Math.round(this.stamina),
       battery: Math.round(this.battery),
       flashlightOn: this.flashlightOn,
+      trishulEquipped: this.trishulEquipped,
       bpm: Math.round(this.bpm),
       maxBpm: this.maxBpm,
       isHiding: this.hidingAlmirah !== null,
       nearPrompt: prompt.text,
       promptKey: prompt.key,
-      roomName: isOutdoor
-        ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
-        : this.world.getRoomName(this.playerPos.x, this.playerPos.z),
+      roomName: isForest
+        ? this.forestWorld.getZoneName(this.playerPos.x, this.playerPos.z)
+        : isOutdoor
+          ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
+          : this.world.getRoomName(this.playerPos.x, this.playerPos.z),
       climaxRemaining: this.climaxRemaining,
       elapsedSeconds: this.elapsedSeconds,
       jumpscaresSurvived: this.jumpscaresSurvived,
@@ -2427,7 +2621,7 @@ export class MokshaGameEngine {
       isConcealed: this.isConcealed,
       stealthReason: this.stealthReason,
       attackCooldownRemaining: this.attackCooldown,
-      attackCooldownTotal: ATTACK_COOLDOWN_SEC,
+      attackCooldownTotal: this.trishulEquipped ? 0.95 : ATTACK_COOLDOWN_SEC,
       attackHitFlash: this.attackHitFlash,
       headroomBlocked: this.headroomBlockedTimer > 0,
       activeCombatEnemy: activeEnemyHud,

@@ -1857,6 +1857,258 @@ export class HorrorAudioManager {
     osc.stop(t + 0.2);
   }
 
+  /** Heavy iron padlock unlock + rusted iron gate creaking open */
+  public playGateUnlock(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    // Metallic lock click + shackle clang
+    const clang = this.ctx.createOscillator();
+    const clangGain = this.ctx.createGain();
+    clang.type = 'triangle';
+    clang.frequency.setValueAtTime(920, t);
+    clang.frequency.exponentialRampToValueAtTime(340, t + 0.12);
+    clangGain.gain.setValueAtTime(0.32, t);
+    clangGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    clang.connect(clangGain);
+    clangGain.connect(this.masterGain);
+    clang.start(t);
+    clang.stop(t + 0.2);
+
+    // Long rusted iron hinge groan
+    const groan = this.ctx.createOscillator();
+    const bp = this.ctx.createBiquadFilter();
+    const gGain = this.ctx.createGain();
+    groan.type = 'sawtooth';
+    groan.frequency.setValueAtTime(138, t + 0.16);
+    groan.frequency.linearRampToValueAtTime(215, t + 0.72);
+    groan.frequency.linearRampToValueAtTime(118, t + 1.35);
+    bp.type = 'bandpass';
+    bp.frequency.value = 540;
+    bp.Q.value = 5.5;
+    gGain.gain.setValueAtTime(0.0001, t + 0.16);
+    gGain.gain.linearRampToValueAtTime(0.24, t + 0.34);
+    gGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    groan.connect(bp);
+    bp.connect(gGain);
+    gGain.connect(this.masterGain);
+    if (this.ghostReverb) gGain.connect(this.ghostReverb);
+    groan.start(t + 0.16);
+    groan.stop(t + 1.44);
+  }
+
+  /** Sacred Iron Trishul metallic slash + flaming mashal whoosh */
+  public playTrishulSwing(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    // Steel blade harmonic ring
+    const ring = this.ctx.createOscillator();
+    const rGain = this.ctx.createGain();
+    ring.type = 'sine';
+    ring.frequency.setValueAtTime(1480, t);
+    ring.frequency.exponentialRampToValueAtTime(620, t + 0.22);
+    rGain.gain.setValueAtTime(0.16, t);
+    rGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+    ring.connect(rGain);
+    rGain.connect(this.masterGain);
+    ring.start(t);
+    ring.stop(t + 0.25);
+
+    if (this.noiseBuffer) {
+      const ns = this.ctx.createBufferSource();
+      ns.buffer = this.noiseBuffer;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1350, t);
+      bp.frequency.exponentialRampToValueAtTime(340, t + 0.24);
+      bp.Q.value = 1.6;
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, t);
+      ng.gain.linearRampToValueAtTime(0.32, t + 0.04);
+      ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+      ns.connect(bp);
+      bp.connect(ng);
+      ng.connect(this.masterGain);
+      ns.start(t);
+      ns.stop(t + 0.28);
+    }
+  }
+
+  /** Eerie Shadow Crawler (Pishach) chittering screech */
+  public playCrawlerScreech(intense = false): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    const bp = this.ctx.createBiquadFilter();
+    const g = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(intense ? 640 : 460, t);
+    osc.frequency.exponentialRampToValueAtTime(intense ? 260 : 220, t + 0.42);
+    lfo.frequency.value = 28;
+    lfoGain.gain.value = 85;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    bp.type = 'bandpass';
+    bp.frequency.value = intense ? 1150 : 880;
+    bp.Q.value = 3.2;
+
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(intense ? 0.28 : 0.17, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.44);
+
+    osc.connect(bp);
+    bp.connect(g);
+    g.connect(this.masterGain);
+    if (this.ghostReverb) g.connect(this.ghostReverb);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 0.46);
+    lfo.stop(t + 0.46);
+  }
+
+  /** Shattering a glowing Tantric Rune Stone */
+  public playRuneShatter(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    // Sub-bass tantric release boom
+    const sub = this.ctx.createOscillator();
+    const subG = this.ctx.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(140, t);
+    sub.frequency.exponentialRampToValueAtTime(34, t + 0.65);
+    subG.gain.setValueAtTime(0.45, t);
+    subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.72);
+    sub.connect(subG);
+    subG.connect(this.masterGain);
+    sub.start(t);
+    sub.stop(t + 0.74);
+
+    // High crystalline stone fracture shards
+    [1320, 1780, 960].forEach((freq, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const st = t + idx * 0.045;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, st);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.45, st + 0.22);
+      g.gain.setValueAtTime(0.22, st);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.25);
+      osc.connect(g);
+      g.connect(this.masterGain);
+      if (this.ghostReverb) g.connect(this.ghostReverb);
+      osc.start(st);
+      osc.stop(st + 0.26);
+    });
+  }
+
+  /** Storm lightning crack when the 3rd Rune Stone shatters & Aghori Dwarpal awakens */
+  public playThunderCrack(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    const ns = this.ctx.createBufferSource();
+    ns.buffer = this.noiseBuffer;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2400, t);
+    lp.frequency.exponentialRampToValueAtTime(140, t + 1.8);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.55, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.9);
+
+    ns.connect(lp);
+    lp.connect(g);
+    g.connect(this.masterGain);
+    if (this.ghostReverb) g.connect(this.ghostReverb);
+    ns.start(t);
+    ns.stop(t + 1.95);
+  }
+
+  /** Deep monstrous Aghori Dwarpal chain rattle & demonic bellow */
+  public playBossRoar(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const lp = this.ctx.createBiquadFilter();
+    const g = this.ctx.createGain();
+
+    osc1.type = 'sawtooth';
+    osc2.type = 'square';
+    osc1.frequency.setValueAtTime(98, t);
+    osc1.frequency.exponentialRampToValueAtTime(52, t + 0.95);
+    osc2.frequency.setValueAtTime(144, t);
+    osc2.frequency.exponentialRampToValueAtTime(64, t + 0.95);
+
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(480, t);
+    lp.frequency.exponentialRampToValueAtTime(190, t + 0.95);
+
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.38, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.05);
+
+    osc1.connect(lp);
+    osc2.connect(lp);
+    lp.connect(g);
+    g.connect(this.masterGain);
+    if (this.ghostReverb) g.connect(this.ghostReverb);
+    osc1.start(t);
+    osc2.start(t);
+    osc1.stop(t + 1.08);
+    osc2.stop(t + 1.08);
+  }
+
+  /** Heavy seismic iron Gada (mace) ground slam */
+  public playBossSlam(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    const thud = this.ctx.createOscillator();
+    const tG = this.ctx.createGain();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(115, t);
+    thud.frequency.exponentialRampToValueAtTime(26, t + 0.48);
+    tG.gain.setValueAtTime(0.58, t);
+    tG.gain.exponentialRampToValueAtTime(0.0001, t + 0.52);
+    thud.connect(tG);
+    tG.connect(this.masterGain);
+    thud.start(t);
+    thud.stop(t + 0.54);
+
+    if (this.noiseBuffer) {
+      const ns = this.ctx.createBufferSource();
+      ns.buffer = this.noiseBuffer;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 620;
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(0.42, t);
+      ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+      ns.connect(lp);
+      lp.connect(ng);
+      ng.connect(this.masterGain);
+      ns.start(t);
+      ns.stop(t + 0.38);
+    }
+  }
+
   public loadCustomTrack(key: keyof CustomAudioTrackMap, url: string): void {
     this.customTracks[key] = url;
     const el = new Audio(url);

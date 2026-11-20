@@ -20,6 +20,10 @@ const toSvg = (worldCoord: number) => PAD + ((worldCoord + 15) / 30) * INNER;
 const toOutdoorX = (wx: number) => PAD + ((wx + 22) / 44) * INNER;
 const toOutdoorZ = (wz: number) => PAD + ((wz + 24) / 54) * INNER;
 
+// Convert Chapter 2 Forest & Outer Courtyard coordinates (x: -22..+22, z: -36..+37) into SVG space
+const toForestX = (wx: number) => PAD + ((wx + 22) / 44) * INNER;
+const toForestZ = (wz: number) => PAD + ((wz + 36) / 73) * INNER;
+
 export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
   mapData,
   ghostState,
@@ -28,11 +32,13 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
   onToggleExpanded,
 }) => {
   const isOutdoor = mapData.mode === 'outdoor';
+  const isForest = mapData.mode === 'forest';
   const playerDeg = (-mapData.playerYaw * 180) / Math.PI;
 
-  const isChasing = !isOutdoor && ghostState === 'chase';
-  const isStaggered = !isOutdoor && ghostState === 'staggered';
-  const isSearching = !isOutdoor && (ghostState === 'investigate' || ghostState === 'search');
+  const isChasing = !isOutdoor && !isForest && ghostState === 'chase';
+  const isStaggered = !isOutdoor && !isForest && ghostState === 'staggered';
+  const isSearching = !isOutdoor && !isForest && (ghostState === 'investigate' || ghostState === 'search');
+  const hasForestBoss = isForest && (mapData.enemies?.some((e) => e.isBoss) ?? false);
 
   const statusText = isStaggered
     ? 'STAGGERED'
@@ -379,8 +385,208 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
     );
   };
 
+  const renderForestBlueprint = (svgClass: string) => {
+    const px = toForestX(mapData.playerX);
+    const pz = toForestZ(mapData.playerZ);
+    const hasDog = typeof mapData.dogX === 'number' && typeof mapData.dogZ === 'number';
+    const dx = hasDog ? toForestX(mapData.dogX!) : 0;
+    const dz = hasDog ? toForestZ(mapData.dogZ!) : 0;
+
+    return (
+      <svg
+        viewBox={`0 0 ${SIZE} ${SIZE}`}
+        className={svgClass}
+        role="img"
+        aria-label="Cursed Banyan Forest and Haveli Outer Courtyard tactical map."
+      >
+        {/* Dark moonlit forest floor plate */}
+        <rect
+          x={PAD}
+          y={PAD}
+          width={INNER}
+          height={INNER}
+          fill="#071214"
+          stroke="#48666a"
+          strokeWidth="1.6"
+        />
+
+        {/* Haveli Outer Courtyard Enclosure (North half: z = -34..-4) */}
+        <rect
+          x={toForestX(-18)}
+          y={toForestZ(-34)}
+          width={toForestX(18) - toForestX(-18)}
+          height={toForestZ(-4) - toForestZ(-34)}
+          fill="#0c181b"
+          stroke="#5c767a"
+          strokeWidth="1.3"
+        />
+
+        {/* Winding Dirt Trail & Courtyard Paths */}
+        <g stroke="#4b3f30" strokeLinecap="round" fill="none" opacity="0.88">
+          <line
+            x1={toForestX(0)}
+            y1={toForestZ(34)}
+            x2={toForestX(0)}
+            y2={toForestZ(-32)}
+            strokeWidth="6.5"
+          />
+          <line
+            x1={toForestX(0)}
+            y1={toForestZ(12)}
+            x2={toForestX(-9.5)}
+            y2={toForestZ(7.5)}
+            strokeWidth="4.6"
+          />
+          <line
+            x1={toForestX(0)}
+            y1={toForestZ(-16)}
+            x2={toForestX(-13)}
+            y2={toForestZ(-18)}
+            strokeWidth="4.5"
+          />
+          <line
+            x1={toForestX(0)}
+            y1={toForestZ(-16)}
+            x2={toForestX(13)}
+            y2={toForestZ(-17)}
+            strokeWidth="4.5"
+          />
+        </g>
+
+        {/* South Outer Village Iron Gate */}
+        <rect
+          x={toForestX(-3.2)}
+          y={toForestZ(29.5)}
+          width={toForestX(3.2) - toForestX(-3.2)}
+          height={3.5}
+          fill="#c48a42"
+          stroke="#f5d599"
+          strokeWidth="0.6"
+        />
+
+        {/* North Sealed Haveli Main Door */}
+        <rect
+          x={toForestX(-3.6)}
+          y={toForestZ(-34.6)}
+          width={toForestX(3.6) - toForestX(-3.6)}
+          height={4.5}
+          fill="#a62f2b"
+          stroke="#f28472"
+          strokeWidth="0.7"
+        />
+
+        {/* Forest & Courtyard Landmarks */}
+        {(mapData.landmarks ?? []).map((lm) => {
+          const lx = toForestX(lm.x);
+          const lz = toForestZ(lm.z);
+          const color =
+            lm.kind === 'shrine'
+              ? '#f2a44b'
+              : lm.kind === 'baoli'
+                ? '#64c2d8'
+                : lm.kind === 'haveli_door'
+                  ? '#ef5350'
+                  : '#8ea3a6';
+          return (
+            <g key={lm.id} transform={`translate(${lx}, ${lz})`}>
+              <rect
+                x={-3}
+                y={-3}
+                width={6}
+                height={6}
+                rx={lm.kind === 'baoli' || lm.kind === 'shrine' ? 3 : 1}
+                fill="#0d1e22"
+                stroke={color}
+                strokeWidth="0.95"
+              />
+              <text
+                y={lm.kind === 'haveli_door' ? 9 : -5}
+                fill="#8aa6aa"
+                fontSize="5.4"
+                fontFamily="JetBrains Mono, monospace"
+                textAnchor="middle"
+              >
+                {lm.label.toUpperCase()}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Companion Dog Waiting Outside Outer Gate */}
+        {hasDog && (
+          <g transform={`translate(${dx}, ${dz})`}>
+            <circle r={2.5} fill="#f3bd60" stroke="#1c1205" strokeWidth="0.7" />
+          </g>
+        )}
+
+        {/* Active Objective Pins (Gate / Shrine / Rune Stones / Boss / Haveli Door) */}
+        {mapData.objectives.map((obj) => {
+          const ox = toForestX(obj.x);
+          const oz = toForestZ(obj.z);
+          const pinColor =
+            obj.kind === 'rune' || obj.kind === 'boss'
+              ? '#ff5a52'
+              : obj.kind === 'trishul' || obj.kind === 'shrine'
+                ? '#ffb84d'
+                : '#ffd166';
+          return (
+            <g key={obj.id} transform={`translate(${ox}, ${oz})`}>
+              <circle r={7.5} fill={pinColor} opacity="0.2" stroke={pinColor} strokeWidth="0.85" />
+              <circle r={3.2} fill={pinColor} stroke="#141008" strokeWidth="0.85" />
+            </g>
+          );
+        })}
+
+        {/* Live Shadow Crawlers & Aghori Boss Markers */}
+        {(mapData.enemies ?? []).map((en) => {
+          const ex = toForestX(en.x);
+          const ez = toForestZ(en.z);
+          if (en.isBoss) {
+            return (
+              <g key={en.id} transform={`translate(${ex}, ${ez})`}>
+                <circle
+                  r={10.5}
+                  fill="rgba(239, 68, 68, 0.28)"
+                  stroke="#ff5555"
+                  strokeWidth="1.2"
+                />
+                <polygon
+                  points="0,-5.5 4.4,0 0,5.5 -4.4,0"
+                  fill="#ff3b44"
+                  stroke="#ffe5e5"
+                  strokeWidth="0.9"
+                />
+              </g>
+            );
+          }
+          return (
+            <g key={en.id} transform={`translate(${ex}, ${ez})`}>
+              <circle r={4.5} fill="rgba(239, 68, 68, 0.24)" />
+              <circle r={2.4} fill="#ff4c4c" stroke="#1c0606" strokeWidth="0.7" />
+            </g>
+          );
+        })}
+
+        {/* LIVE PLAYER MARKER + DIRECTIONAL CONE */}
+        <g transform={`translate(${px}, ${pz}) rotate(${playerDeg})`}>
+          <polygon points="0,0 -7,-16 7,-16" fill="rgba(125, 211, 224, 0.26)" />
+          <polygon
+            points="0,-5 3.8,4 0,2 -3.8,4"
+            fill="#7de2ee"
+            stroke="#061215"
+            strokeWidth="0.9"
+          />
+        </g>
+      </svg>
+    );
+  };
+
   const renderSvgBlueprint = (svgClass: string) =>
-    isOutdoor ? renderOutdoorBlueprint(svgClass) : renderHaveliBlueprint(svgClass);
+    isForest
+      ? renderForestBlueprint(svgClass)
+      : isOutdoor
+        ? renderOutdoorBlueprint(svgClass)
+        : renderHaveliBlueprint(svgClass);
 
   const primaryObjLabel = mapData.objectives[0]?.label ?? 'Explore';
 
@@ -409,10 +615,14 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
                 <MapIcon className="w-4 h-4 text-[#e5a94c] shrink-0" />
                 <div>
                   <h3 className="font-display text-base sm:text-lg font-bold text-[#f4ede0] tracking-wide">
-                    {isOutdoor ? 'Village Outskirts Map' : 'Haveli Spirit Map'}
+                    {isForest
+                      ? 'Cursed Forest & Courtyard Map'
+                      : isOutdoor
+                        ? 'Village Outskirts Map'
+                        : 'Haveli Spirit Map'}
                   </h3>
                   <p className="text-[11px] font-mono-tabular text-[#95abae]">
-                    {isOutdoor ? (
+                    {isForest || isOutdoor ? (
                       <>
                         Next Pin:{' '}
                         <span className="text-[#f5c768] font-semibold">{primaryObjLabel}</span>
@@ -437,7 +647,26 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
               </button>
             </div>
 
-            {isOutdoor ? (
+            {isForest ? (
+              <div className="grid grid-cols-2 gap-2 text-xs text-[#b4c4c6]">
+                <div className="flex items-center gap-2 p-2 rounded-sm bg-[#0c171b] border border-white/10">
+                  <span className="inline-block w-2.5 h-2.5 bg-[#7de2ee] shrink-0" />
+                  <span>Your Position</span>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-sm bg-[#0c171b] border border-white/10">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#ff4c4c] shrink-0" />
+                  <span>Shadow Crawlers</span>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-sm bg-[#0c171b] border border-white/10">
+                  <span className="inline-block w-2.5 h-2.5 rotate-45 bg-[#ff3b44] border border-white/60 shrink-0" />
+                  <span>Aghori Dwarpal</span>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-sm bg-[#0c171b] border border-white/10">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#ffb84d] shrink-0" />
+                  <span>Shrine / Runes</span>
+                </div>
+              </div>
+            ) : isOutdoor ? (
               <div className="grid grid-cols-2 gap-2 text-xs text-[#b4c4c6]">
                 <div className="flex items-center gap-2 p-2 rounded-sm bg-[#0c171b] border border-white/10">
                   <span className="inline-block w-2.5 h-2.5 bg-[#7de2ee] shrink-0" />
@@ -506,13 +735,26 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
               right: '20px',
             }),
         backgroundColor: 'rgba(6, 12, 14, 0.84)',
-        borderColor: isChasing ? 'rgba(239, 68, 68, 0.75)' : 'rgba(255, 255, 255, 0.14)',
+        borderColor:
+          isChasing || hasForestBoss
+            ? 'rgba(239, 68, 68, 0.75)'
+            : 'rgba(255, 255, 255, 0.14)',
       }}
     >
       {/* Header Row */}
       <div className="flex items-center justify-between px-1.5 py-0.5 sm:px-2 sm:py-1 border-b border-white/10">
         <span className="text-[9px] sm:text-[10px] font-mono-tabular uppercase tracking-[0.12em] text-[#a5b9bc]">
-          {isOutdoor ? (isTouchDevice ? 'Trail' : 'Village Map') : isTouchDevice ? 'Radar' : 'Haveli Map'}
+          {isForest
+            ? isTouchDevice
+              ? 'Forest'
+              : 'Forest Map'
+            : isOutdoor
+              ? isTouchDevice
+                ? 'Trail'
+                : 'Village Map'
+              : isTouchDevice
+                ? 'Radar'
+                : 'Haveli Map'}
         </span>
         <button
           type="button"
@@ -537,8 +779,11 @@ export const HaveliMinimap: React.FC<HaveliMinimapProps> = ({
 
       {/* Footer Row */}
       <div className="px-1.5 py-0.5 sm:px-2 sm:py-1 border-t border-white/10 flex items-center justify-between gap-1 text-[9px] sm:text-[10px] font-mono-tabular">
-        {isOutdoor ? (
-          <span className="truncate font-semibold text-[#f3bd60]">
+        {isForest || isOutdoor ? (
+          <span
+            className="truncate font-semibold"
+            style={{ color: hasForestBoss ? '#ff6464' : '#f3bd60' }}
+          >
             {isTouchDevice ? primaryObjLabel : `Pin: ${primaryObjLabel}`}
           </span>
         ) : (

@@ -358,7 +358,15 @@ export const GameHud: React.FC<GameHudProps> = ({
                     {hud.isOutdoor
                       ? hud.playerHealth <= 50
                         ? 'INJURED'
-                        : 'OUTSKIRTS'
+                        : hud.activeCombatEnemy
+                          ? 'BOSS FIGHT'
+                          : hud.isConcealed
+                            ? 'HIDDEN'
+                            : hud.trishulEquipped
+                              ? 'TRISHUL'
+                              : hud.mapData.mode === 'forest'
+                                ? 'FOREST'
+                                : 'OUTSKIRTS'
                       : hud.isConcealed
                         ? 'HIDDEN'
                         : hud.isHiding && hud.flashlightOn
@@ -443,10 +451,15 @@ export const GameHud: React.FC<GameHudProps> = ({
                 style={{ backgroundColor: 'rgba(14, 8, 9, 0.88)' }}
               >
                 <div className="flex items-center justify-between gap-2 text-[10px] sm:text-xs">
-                  <span className="font-display font-semibold tracking-wider text-[#f7e7dc] uppercase">
+                  <span className="font-display font-semibold tracking-wider text-[#f7e7dc] uppercase truncate">
                     {hud.activeCombatEnemy.name}
+                    {hud.activeCombatEnemy.hindiName ? (
+                      <span className="ml-1.5 text-[10px] font-normal text-[#e8b496] normal-case">
+                        · {hud.activeCombatEnemy.hindiName}
+                      </span>
+                    ) : null}
                   </span>
-                  <span className="font-mono-tabular text-[#e29595]">
+                  <span className="font-mono-tabular text-[#e29595] shrink-0">
                     {hud.activeCombatEnemy.staggered
                       ? 'STAGGERED'
                       : `${hud.activeCombatEnemy.hp} / ${hud.activeCombatEnemy.maxHp}`}
@@ -613,9 +626,11 @@ export const GameHud: React.FC<GameHudProps> = ({
                 </span>
                 <span className="font-mono-tabular">
                   {hud.attackCooldownRemaining > 0.05
-                    ? `Bash ${hud.attackCooldownRemaining.toFixed(1)}s`
-                    : hud.stamina >= 20
-                      ? 'LMB Bash Ready'
+                    ? `${hud.trishulEquipped ? 'Swing' : 'Bash'} ${hud.attackCooldownRemaining.toFixed(1)}s`
+                    : hud.stamina >= (hud.trishulEquipped ? 12 : 20)
+                      ? hud.trishulEquipped
+                        ? 'LMB Trishul Ready'
+                        : 'LMB Bash Ready'
                       : 'Low Stamina'}
                 </span>
               </div>

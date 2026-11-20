@@ -1262,48 +1262,48 @@ export function buildHaveliWorld(
       door.rightPivot.rotation.y = -door.openAmount * 1.56;
     });
 
-    // Chapter 2 (formerly Ch 1): 5 Shrine Diyas
+    // Chapter 3 (formerly Ch 2 / orig Ch 1): 5 Shrine Diyas
     shrineDiyas.forEach((d) => {
       d.lit = false;
       d.flameMesh.visible = false;
       if (d.light) d.light.intensity = 0;
-      d.group.visible = chapter === 2;
+      d.group.visible = chapter === 3;
     });
 
-    // Chapter 3 (formerly Ch 2): Notes reset unread state (notes stay readable in all indoor chapters, highlighted in Ch 3)
+    // Chapter 4 (formerly Ch 3 / orig Ch 2): Notes reset unread state (readable in all indoor chapters, highlighted in Ch 4)
     notes.forEach((n) => {
       n.read = false;
-      (n.auraRing.material as THREE.MeshBasicMaterial).opacity = chapter === 3 ? 0.36 : 0;
+      (n.auraRing.material as THREE.MeshBasicMaterial).opacity = chapter === 4 ? 0.36 : 0;
     });
 
-    // Chapter 4 (formerly Ch 3): 4 Sequenced Brass Temple Bells
+    // Chapter 5 (formerly Ch 4 / orig Ch 3): 4 Sequenced Brass Temple Bells
     chapterBells.forEach((b) => {
       b.rung = false;
       b.swingAngle = 0;
       b.swingVelocity = 0;
       b.bellPivot.rotation.z = 0;
-      b.group.visible = chapter === 4;
+      b.group.visible = chapter === 5;
     });
 
-    // Chapter 5 (formerly Ch 4): 4 Cursed Crimson Tantrik Seals
+    // Chapter 6 (formerly Ch 5 / orig Ch 4): 4 Cursed Crimson Tantrik Seals
     cursedSeals.forEach((s) => {
       s.broken = false;
       s.talismanMesh.visible = true;
       s.talismanMesh.scale.set(1, 1, 1);
-      if (s.light) s.light.intensity = chapter === 5 ? 1.65 : 0;
-      s.group.visible = chapter === 5;
+      if (s.light) s.light.intensity = chapter === 6 ? 1.65 : 0;
+      s.group.visible = chapter === 6;
     });
 
-    // Chapter 6 (formerly Ch 5): 4 Randomized Sacred Ritual Items
+    // Chapter 7 (formerly Ch 6 / orig Ch 5): 4 Randomized Sacred Ritual Items
     randomizeItemSpawns();
     ritualItems.forEach((item) => {
-      item.group.visible = chapter === 6;
-      if (chapter !== 6) {
-        item.collected = true; // hide from interaction outside Ch 6
+      item.group.visible = chapter === 7;
+      if (chapter !== 7) {
+        item.collected = true; // hide from interaction outside Ch 7
       }
     });
   };
-  configureForChapter(2);
+  configureForChapter(3);
 
   return {
     root,

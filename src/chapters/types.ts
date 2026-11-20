@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { HorrorAudioManager } from '../game/audio';
+import { ForestCourtyardWorld } from '../game/forestCourtyardMap';
 import { GhostAIController } from '../game/ghostAI';
 import { HaveliWorld } from '../game/haveliMap';
 import { OutdoorVillageWorld } from '../game/outdoorVillageMap';
 import {
   ChapterConfig,
   Difficulty,
+  EnemyCombatEntity,
   LoreNoteData,
   MinimapObjective,
   PlayerStance,
@@ -33,6 +35,7 @@ export interface ChapterCameraOverride {
 export interface ChapterRuntimeContext {
   world: HaveliWorld;
   outdoorWorld: OutdoorVillageWorld;
+  forestWorld: ForestCourtyardWorld;
   ghostAI: GhostAIController;
   audio: HorrorAudioManager;
   playerPos: THREE.Vector3;
@@ -40,6 +43,9 @@ export interface ChapterRuntimeContext {
   playerPitch: number;
   playerFeetY: number;
   stance: PlayerStance;
+  stealthFactor: number;
+  flashlightOn: boolean;
+  trishulEquipped: boolean;
   difficulty: Difficulty;
   elapsedSeconds: number;
   timeSinceProgress: number;
@@ -49,6 +55,11 @@ export interface ChapterRuntimeContext {
   resetProgressTimer: () => void;
   setHoldingItem: (id: RitualItemId | null) => void;
   addPlacedItem: (id: RitualItemId) => void;
+  setTrishulEquipped: (equipped: boolean) => void;
+  registerCombatEnemy: (enemy: EnemyCombatEntity) => void;
+  unregisterCombatEnemy: (enemyId: string) => void;
+  setActiveCombatEnemy: (enemy: EnemyCombatEntity | null) => void;
+  setProximityIntensity: (intensity: number) => void;
   completeChapter: () => void;
   startClimax: () => void;
   openNote: (note: LoreNoteData) => void;
@@ -59,7 +70,7 @@ export interface ChapterRuntimeContext {
   damagePlayer: (
     amount: number,
     reason: string,
-    kind: 'thorn' | 'scorpion',
+    kind: 'thorn' | 'scorpion' | 'crawler' | 'boss',
     pushX?: number,
     pushZ?: number
   ) => void;
@@ -86,4 +97,7 @@ export interface ChapterModule {
   onNoteRead?: (ctx: ChapterRuntimeContext, wasUnread: boolean, pos: THREE.Vector3) => void;
   getNotePromptBadge?: (ctx: ChapterRuntimeContext, read: boolean) => string;
   isMovementLocked?: () => boolean;
+  canPlayerAttack?: (ctx: ChapterRuntimeContext) => boolean;
+  onPlayerMeleeSwing?: (ctx: ChapterRuntimeContext, forwardDir: THREE.Vector3) => boolean;
+  onCheckpointRevive?: (ctx: ChapterRuntimeContext, checkpointId: string) => void;
 }

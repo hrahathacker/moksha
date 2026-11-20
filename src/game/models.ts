@@ -59,6 +59,10 @@ export interface HingedDoorRig {
 
 export interface FlashlightRig {
   viewGroup: THREE.Group;
+  flashlightBodyGroup: THREE.Group;
+  trishulGroup: THREE.Group;
+  trishulFlameMesh: THREE.Mesh;
+  trishulFlameLight: THREE.PointLight;
   spotLight: THREE.SpotLight;
   beamMesh: THREE.Mesh;
   innerBeamMesh: THREE.Mesh;
@@ -72,6 +76,7 @@ export interface FlashlightRig {
   sparkRays: Array<{ mesh: THREE.Mesh; dir: THREE.Vector3 }>;
   sparkRayMat: THREE.MeshBasicMaterial;
   sparkLight: THREE.PointLight;
+  setWeaponMode: (mode: 'flashlight' | 'trishul') => void;
   updateBeamDust: (dt: number, elapsed: number, highDetail: boolean) => void;
 }
 
@@ -1485,41 +1490,44 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
     opacity: 0.62,
   });
 
+  const flashlightBodyGroup = new THREE.Group();
+  viewGroup.add(flashlightBodyGroup);
+
   // 1. Corrugated knurled cylindrical metal barrel
   const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.029, 0.25, 18), knurledBodyMat);
   barrel.rotation.x = Math.PI / 2;
   barrel.position.z = 0.015;
-  viewGroup.add(barrel);
+  flashlightBodyGroup.add(barrel);
 
   // 2. Weathered brass rear tail-cap & hanging D-ring
   const tailCap = new THREE.Mesh(new THREE.CylinderGeometry(0.0315, 0.03, 0.036, 16), brassAccentMat);
   tailCap.rotation.x = Math.PI / 2;
   tailCap.position.z = 0.15;
-  viewGroup.add(tailCap);
+  flashlightBodyGroup.add(tailCap);
 
   const lanyardRing = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.0028, 6, 14), brassAccentMat);
   lanyardRing.position.set(0, -0.008, 0.174);
   lanyardRing.rotation.x = 0.35;
-  viewGroup.add(lanyardRing);
+  flashlightBodyGroup.add(lanyardRing);
 
   // 3. Brass locking collar rings & top thumb-slide power switch housing
   const collarRear = new THREE.Mesh(new THREE.CylinderGeometry(0.0335, 0.0335, 0.014, 16), brassAccentMat);
   collarRear.rotation.x = Math.PI / 2;
   collarRear.position.z = 0.115;
-  viewGroup.add(collarRear);
+  flashlightBodyGroup.add(collarRear);
 
   const collarFront = new THREE.Mesh(new THREE.CylinderGeometry(0.0345, 0.033, 0.016, 16), brassAccentMat);
   collarFront.rotation.x = Math.PI / 2;
   collarFront.position.z = -0.105;
-  viewGroup.add(collarFront);
+  flashlightBodyGroup.add(collarFront);
 
   const switchTrack = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.01, 0.056), headMetalMat);
   switchTrack.position.set(0, 0.033, -0.055);
-  viewGroup.add(switchTrack);
+  flashlightBodyGroup.add(switchTrack);
 
   const switchNub = new THREE.Mesh(new THREE.BoxGeometry(0.013, 0.009, 0.02), brassAccentMat);
   switchNub.position.set(0, 0.039, -0.065);
-  viewGroup.add(switchNub);
+  flashlightBodyGroup.add(switchNub);
 
   // 4. Lathe-turned flared vintage reflector head (Eveready stepped bell silhouette)
   const headProfile = [
@@ -1534,12 +1542,12 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
   headGeo.rotateX(-Math.PI / 2);
   const head = new THREE.Mesh(headGeo, headMetalMat);
   head.position.z = -0.11;
-  viewGroup.add(head);
+  flashlightBodyGroup.add(head);
 
   // Brass bezel ring around front lens rim
   const frontBezel = new THREE.Mesh(new THREE.TorusGeometry(0.0545, 0.0045, 8, 20), brassAccentMat);
   frontBezel.position.z = -0.201;
-  viewGroup.add(frontBezel);
+  flashlightBodyGroup.add(frontBezel);
 
   // 5. Recessed parabolic metallic reflector dish + glowing tungsten bulb
   const dishProfile = [
@@ -1552,17 +1560,112 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
   dishGeo.rotateX(-Math.PI / 2);
   const dish = new THREE.Mesh(dishGeo, reflectorMat);
   dish.position.z = -0.145;
-  viewGroup.add(dish);
+  flashlightBodyGroup.add(dish);
 
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), bulbMat);
   bulb.position.z = -0.162;
-  viewGroup.add(bulb);
+  flashlightBodyGroup.add(bulb);
 
   // Protective warm glass lens cap
   const lens = new THREE.Mesh(new THREE.CircleGeometry(0.051, 18), lensMat);
   lens.position.z = -0.2;
   lens.rotation.y = Math.PI;
-  viewGroup.add(lens);
+  flashlightBodyGroup.add(lens);
+
+  // 5B. Composite Sacred Iron Trishul & Flaming Mashal (equipped in Chapter 2 at the Shiva Shrine)
+  const trishulGroup = new THREE.Group();
+  trishulGroup.visible = false;
+  trishulGroup.position.set(0.02, -0.02, -0.04);
+  trishulGroup.rotation.set(-0.24, 0.06, -0.04);
+
+  const forgedIronMat = new THREE.MeshStandardMaterial({
+    map: textures.ironColor,
+    bumpMap: textures.ironBump,
+    bumpScale: 0.022,
+    roughnessMap: textures.ironRoughness,
+    color: 0x4b5158,
+    roughness: 0.42,
+    metalness: 0.86,
+  });
+  const saffronWrapMat = new THREE.MeshStandardMaterial({
+    color: 0xa82e14,
+    roughness: 0.88,
+    metalness: 0.04,
+  });
+
+  // Main forged iron shaft extending forward and up
+  const tShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.016, 0.62, 10), forgedIronMat);
+  tShaft.rotation.x = Math.PI / 2;
+  tShaft.position.z = -0.12;
+  trishulGroup.add(tShaft);
+
+  // Saffron sacred cloth wrap around grip & flaming oil-soaked mashal collar
+  const tGripWrap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.14, 10), saffronWrapMat);
+  tGripWrap.rotation.x = Math.PI / 2;
+  tGripWrap.position.z = 0.05;
+  trishulGroup.add(tGripWrap);
+
+  const mashalWrap = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.024, 0.09, 10), saffronWrapMat);
+  mashalWrap.rotation.x = Math.PI / 2;
+  mashalWrap.position.z = -0.27;
+  trishulGroup.add(mashalWrap);
+
+  // Brass damaru (small hourglass drum) tied below the trident crescent
+  const damaruTop = new THREE.Mesh(new THREE.ConeGeometry(0.024, 0.036, 8), brassAccentMat);
+  damaruTop.position.set(0.028, -0.01, -0.2);
+  damaruTop.rotation.z = Math.PI / 2;
+  const damaruBot = new THREE.Mesh(new THREE.ConeGeometry(0.024, 0.036, 8), brassAccentMat);
+  damaruBot.position.set(0.062, -0.01, -0.2);
+  damaruBot.rotation.z = -Math.PI / 2;
+  trishulGroup.add(damaruTop, damaruBot);
+
+  // Curved crescent cross-guard + 3 razor-sharp iron trident prongs
+  const crescent = new THREE.Mesh(
+    new THREE.TorusGeometry(0.072, 0.011, 8, 16, Math.PI),
+    forgedIronMat
+  );
+  crescent.rotation.x = Math.PI / 2;
+  crescent.rotation.z = Math.PI;
+  crescent.position.z = -0.36;
+  trishulGroup.add(crescent);
+
+  const centerProng = new THREE.Mesh(new THREE.ConeGeometry(0.016, 0.24, 6), forgedIronMat);
+  centerProng.rotation.x = -Math.PI / 2;
+  centerProng.position.z = -0.5;
+  trishulGroup.add(centerProng);
+
+  [-0.072, 0.072].forEach((px) => {
+    const sideProng = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.17, 6), forgedIronMat);
+    sideProng.rotation.x = -Math.PI / 2;
+    sideProng.rotation.z = px > 0 ? -0.14 : 0.14;
+    sideProng.position.set(px, 0, -0.45);
+    trishulGroup.add(sideProng);
+  });
+
+  // Blazing animated sacred Dhuni mashal flame hugging the upper collar
+  const trishulFlameMesh = new THREE.Mesh(
+    new THREE.ConeGeometry(0.044, 0.15, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0xffa634,
+      transparent: true,
+      opacity: 0.9,
+    })
+  );
+  trishulFlameMesh.position.set(0, 0.068, -0.27);
+  const innerFlame = new THREE.Mesh(
+    new THREE.ConeGeometry(0.024, 0.095, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfff0b2 })
+  );
+  innerFlame.position.y = -0.018;
+  trishulFlameMesh.add(innerFlame);
+  trishulGroup.add(trishulFlameMesh);
+
+  const trishulFlameLight = new THREE.PointLight(0xff9b38, 0, 7.5, 1.8);
+  trishulFlameLight.position.set(0, 0.1, -0.28);
+  trishulFlameLight.castShadow = false;
+  trishulGroup.add(trishulFlameLight);
+
+  viewGroup.add(trishulGroup);
 
   // Position in lower-right foreground of FPS camera
   viewGroup.position.set(0.28, -0.22, -0.44);
@@ -1707,8 +1810,21 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
   spotLight.shadow.camera.far = 22;
   spotLight.shadow.bias = -0.001;
 
+  const setWeaponMode = (mode: 'flashlight' | 'trishul') => {
+    const isTrishul = mode === 'trishul';
+    flashlightBodyGroup.visible = !isTrishul;
+    trishulGroup.visible = isTrishul;
+    if (!isTrishul) {
+      trishulFlameLight.intensity = 0;
+    }
+  };
+
   return {
     viewGroup,
+    flashlightBodyGroup,
+    trishulGroup,
+    trishulFlameMesh,
+    trishulFlameLight,
     spotLight,
     beamMesh,
     innerBeamMesh,
@@ -1722,6 +1838,7 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
     sparkRays,
     sparkRayMat,
     sparkLight,
+    setWeaponMode,
     updateBeamDust,
   };
 }
