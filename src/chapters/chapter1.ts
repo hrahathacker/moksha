@@ -84,6 +84,7 @@ export function createChapter1(): ChapterModule {
   let pokeTriggered = false;
   let gateBellPlayed = false;
   let completedFired = false;
+  let pendingCorporateDialogueTimer = -1;
 
   const setAuraOpacity = (mesh: THREE.Mesh, opacity: number) => {
     const mat = mesh.material as THREE.MeshBasicMaterial;
@@ -166,6 +167,7 @@ export function createChapter1(): ChapterModule {
       pokeTriggered = false;
       gateBellPlayed = false;
       completedFired = false;
+      pendingCorporateDialogueTimer = -1;
 
       const ow = ctx.outdoorWorld;
       ow.pawPrintGroup.visible = false;
@@ -211,6 +213,19 @@ export function createChapter1(): ChapterModule {
         }
       }
       ow.updateVisuals(dt, timeSec, bucketProgress);
+
+      // 1B. Sequenced follow-up corporate dialogue right after Sacred Tulsi Mantra finishes
+      if (pendingCorporateDialogueTimer > 0) {
+        pendingCorporateDialogueTimer -= dt;
+        if (pendingCorporateDialogueTimer <= 0) {
+          pendingCorporateDialogueTimer = -1;
+          ctx.audio.speakProtagonistLine(
+            'कहाँ फँस गया यार मैं... बढ़िया कॉर्पोरेट जॉब चल रही थी शहर में, इस सुनसान गाँव में आके कहाँ फँस गया!',
+            'Kahan phans gaya yaar main... badhiya corporate job chal rahi thi sheher mein, is sunsaan gaon mein aake kahan phans gaya!',
+            6400
+          );
+        }
+      }
 
       // 2. Update active objective floor aura rings
       setAuraOpacity(ow.dog.auraRing, step === 'feed_dog' || step === 'water_dog' ? pulse + 0.1 : 0);
@@ -598,7 +613,7 @@ export function createChapter1(): ChapterModule {
         return true;
       }
 
-      // Pour Water onto Sacred Tulsi Plant -> Trigger Protagonist Hindi Monologue via AndroidTTS!
+      // Pour Water onto Sacred Tulsi Plant -> Chant Sacred Tulsi Mantra, then Protagonist Corporate Dialogue via AndroidTTS!
       if (step === 'water_tulsi' && distToTulsi < 2.95) {
         step = 'rest_veranda';
         (ow.tulsiWaterGlow.material as THREE.MeshBasicMaterial).opacity = 0.72;
@@ -606,12 +621,14 @@ export function createChapter1(): ChapterModule {
         ctx.triggerInteractImpulse(0.9);
         ctx.spawnBurst(ow.tulsiPos, 0x74d8e8);
         ctx.audio.playWaterSplash();
+        ctx.audio.playTempleBell(0.45);
         ctx.setCheckpoint(CHECKPOINTS.tulsi_watered, true);
         ctx.audio.speakProtagonistLine(
-          'कहाँ फँस गया यार मैं... बढ़िया कॉर्पोरेट जॉब चल रही थी शहर में, इस सुनसान गाँव में आके कहाँ फँस गया!',
-          'Kahan phans gaya yaar main... badhiya corporate job chal rahi thi sheher mein, is sunsaan gaon mein aake kahan phans gaya!',
-          6400
+          'ॐ तुलस्यै नमः। महाप्रसाद जननी सर्व सौभाग्यवर्धिनी, आधि व्याधि हरा नित्यं तुलसी त्वं नमोस्तुते।',
+          'Om Tulsyai Namah. Mahaprasad Janani Sarva Saubhagyavardhini, Aadhi Vyadhi Hara Nityam Tulsi Tvam Namostute.',
+          6800
         );
+        pendingCorporateDialogueTimer = 7.0;
         ctx.emitHud();
         return true;
       }
@@ -644,6 +661,19 @@ export function createChapter1(): ChapterModule {
           ctx.playerPos.x - Math.sin(ctx.playerYaw) * 4.5,
           ctx.playerPos.y + Math.sin(ctx.playerPitch) * 3.0,
           ctx.playerPos.z - Math.cos(ctx.playerYaw) * 4.5
+        );
+        ctx.emitHud();
+        return true;
+      }
+
+      // Locked Outer Iron Gate (locked throughout Chapter 1 until the Haveli Key objective completes)
+      if (Math.hypot(ctx.playerPos.x - ow.haveliGatePos.x, ctx.playerPos.z - ow.haveliGatePos.z) < 3.6) {
+        ctx.triggerInteractImpulse(0.55);
+        ctx.audio.playLockedChainRattle();
+        ctx.audio.showHintSubtitle(
+          'यह रास्ता अभी बंद है — आगे के अध्याय में खुलेगा।',
+          'Yeh raasta abhi band hai — aage ke adhyay mein khulega.',
+          3800
         );
         ctx.emitHud();
         return true;
@@ -724,6 +754,12 @@ export function createChapter1(): ChapterModule {
         ) {
           return { text: 'Pick Up Rusted Iron Haveli Key (हवेली की चाभी)', key: 'E' };
         }
+      }
+
+      if (
+        Math.hypot(ctx.playerPos.x - ow.haveliGatePos.x, ctx.playerPos.z - ow.haveliGatePos.z) < 3.6
+      ) {
+        return { text: 'Locked Outer Iron Gate (Chained)', key: 'E' };
       }
 
       return null;

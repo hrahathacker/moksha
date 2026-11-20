@@ -47,6 +47,64 @@ export const CHAPTER_CONFIGS: Record<ChapterNumber, ChapterConfig> = CHAPTER_LIS
 
 export const TOTAL_CHAPTERS = CHAPTER_LIST.length;
 export const FINAL_CHAPTER_ID = CHAPTER_LIST[CHAPTER_LIST.length - 1].id;
+export const MASTER_TOTAL_CHAPTERS = 11;
+
+export interface MasterChapterRoadmapEntry {
+  id: number;
+  title: string;
+  hindiTitle: string;
+  zoneLabel: string;
+  playable: boolean;
+}
+
+/**
+ * Full 11-Chapter Master Saga Roadmap across all 4 interconnected zones:
+ * Zone 1 (Village Outskirts & Shapit Jungle), Zone 2 (Haveli Ground Floor),
+ * Zone 3 (1st Floor — Upar Ki Manzil), and Zone 4 (Underground Tahkhana).
+ * Chapters 1–7 are live and playable anytime; Chapters 8–11 are mapped for upcoming story expansions.
+ */
+export const MASTER_CAMPAIGN_ROADMAP: MasterChapterRoadmapEntry[] = [
+  ...CHAPTER_LIST.map((ch) => ({
+    id: ch.id,
+    title: ch.title,
+    hindiTitle: ch.hindiTitle,
+    zoneLabel:
+      ch.environment === 'outdoor'
+        ? 'Village'
+        : ch.environment === 'forest'
+          ? 'Jungle'
+          : 'Ground Floor',
+    playable: true,
+  })),
+  {
+    id: 8,
+    title: 'Thakur Ka Pustakalaya',
+    hindiTitle: 'ठाकुर का पुस्तकालय',
+    zoneLabel: '1st Floor',
+    playable: false,
+  },
+  {
+    id: 9,
+    title: 'Dulhan Ka Aaina',
+    hindiTitle: 'दुल्हन का आईना',
+    zoneLabel: '1st Floor',
+    playable: false,
+  },
+  {
+    id: 10,
+    title: 'Tahkhane Ki Zanjeerein',
+    hindiTitle: 'तहखाने की जंजीरें',
+    zoneLabel: 'Tahkhana',
+    playable: false,
+  },
+  {
+    id: 11,
+    title: 'Maha Tantrik Ka Ant',
+    hindiTitle: 'महा तांत्रिक का अंत',
+    zoneLabel: 'Tahkhana',
+    playable: false,
+  },
+];
 
 export function isValidChapterId(id: unknown): id is ChapterNumber {
   return typeof id === 'number' && Number.isInteger(id) && id in CHAPTER_INSTANCES;

@@ -1586,6 +1586,11 @@ export class HorrorAudioManager {
     }, durationMs);
   }
 
+  /** Displays a brief player-side subtitle/hint banner without interrupting TTS queues */
+  public showHintSubtitle(hindi: string, hinglish: string, durationMs = 3800): void {
+    this.emitSubtitle(hindi, hinglish, durationMs, 'player');
+  }
+
   /**
    * Speaks protagonist Hindi monologue offline using window.AndroidTTS.speak(text, 1.0, 0.95)
    * when running inside Android Capacitor WebView, falling back to browser Web Speech API,
@@ -2107,6 +2112,82 @@ export class HorrorAudioManager {
       ns.start(t);
       ns.stop(t + 0.38);
     }
+  }
+
+  /** Heavy rusted iron chain & padlock rattle when trying to open a story-locked gate or trapdoor */
+  public playLockedChainRattle(): void {
+    this.unlock();
+    if (!this.ctx || !this.masterGain || this.muted) return;
+    const t = this.ctx.currentTime;
+
+    // 4 rapid metallic chain-link clanks + padlock thud
+    const hits = [0.0, 0.085, 0.175, 0.28];
+    const baseFreqs = [880, 1240, 760, 1080];
+    hits.forEach((offset, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const st = t + offset;
+
+      const osc1 = this.ctx.createOscillator();
+      const osc2 = this.ctx.createOscillator();
+      osc1.type = 'triangle';
+      osc2.type = 'square';
+      osc1.frequency.setValueAtTime(baseFreqs[idx], st);
+      osc1.frequency.exponentialRampToValueAtTime(baseFreqs[idx] * 0.72, st + 0.09);
+      osc2.frequency.setValueAtTime(baseFreqs[idx] * 1.43, st);
+      osc2.frequency.exponentialRampToValueAtTime(baseFreqs[idx] * 1.15, st + 0.08);
+
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1450 + idx * 180, st);
+      bp.Q.value = 6.5;
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.linearRampToValueAtTime(0.24 - idx * 0.025, st + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.12);
+
+      osc1.connect(bp);
+      osc2.connect(bp);
+      bp.connect(g);
+      g.connect(this.masterGain);
+      if (this.ghostReverb) g.connect(this.ghostReverb);
+      osc1.start(st);
+      osc2.start(st);
+      osc1.stop(st + 0.13);
+      osc2.stop(st + 0.13);
+
+      // Metallic scrape noise burst for chain links rubbing
+      if (this.noiseBuffer) {
+        const ns = this.ctx.createBufferSource();
+        ns.buffer = this.noiseBuffer;
+        const hp = this.ctx.createBiquadFilter();
+        hp.type = 'bandpass';
+        hp.frequency.setValueAtTime(2800 + idx * 260, st);
+        hp.Q.value = 4.0;
+        const ng = this.ctx.createGain();
+        ng.gain.setValueAtTime(0.0001, st);
+        ng.gain.linearRampToValueAtTime(0.18, st + 0.01);
+        ng.gain.exponentialRampToValueAtTime(0.0001, st + 0.09);
+        ns.connect(hp);
+        hp.connect(ng);
+        ng.connect(this.masterGain);
+        ns.start(st);
+        ns.stop(st + 0.1);
+      }
+    });
+
+    // Heavy iron bolt dull thud at start
+    const thud = this.ctx.createOscillator();
+    const thudG = this.ctx.createGain();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(145, t);
+    thud.frequency.exponentialRampToValueAtTime(48, t + 0.14);
+    thudG.gain.setValueAtTime(0.28, t);
+    thudG.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    thud.connect(thudG);
+    thudG.connect(this.masterGain);
+    thud.start(t);
+    thud.stop(t + 0.17);
   }
 
   public loadCustomTrack(key: keyof CustomAudioTrackMap, url: string): void {

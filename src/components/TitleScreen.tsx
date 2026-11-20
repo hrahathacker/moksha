@@ -1,6 +1,11 @@
 import React, { useEffect } from 'react';
-import { Volume2, VolumeX, Play, Flame, BookOpen, Check, Maximize, Minimize, Music } from 'lucide-react';
-import { CHAPTER_CONFIGS, CHAPTER_LIST, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
+import { Volume2, VolumeX, Play, Flame, BookOpen, Check, Maximize, Minimize, Music, Lock } from 'lucide-react';
+import {
+  CHAPTER_CONFIGS,
+  MASTER_CAMPAIGN_ROADMAP,
+  MASTER_TOTAL_CHAPTERS,
+  TOTAL_CHAPTERS,
+} from '../chapters/chapterRegistry';
 import {
   ChapterNumber,
   DIFFICULTY_CONFIGS,
@@ -171,9 +176,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 The Last Ritual
               </p>
               <p className="text-xs lg:text-sm text-[#b4c2c4] max-w-md leading-relaxed">
-                {TOTAL_CHAPTERS} chapters of 1984 Indian survival horror — misty village outskirts
-                prologue, haunted haveli rituals, live map, Hindi voice acting, and Moksha Geet
-                finale.
+                {MASTER_TOTAL_CHAPTERS}-chapter 1984 Indian survival horror saga across 4 zones —
+                misty village outskirts, Shapit Jungle, multi-floor Haveli &amp; underground
+                Tahkhana.
               </p>
             </div>
 
@@ -206,32 +211,48 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="sm:col-span-6 p-3.5 lg:p-5 rounded-sm border border-white/12 space-y-3 lg:space-y-4"
             style={{ backgroundColor: 'rgba(8, 15, 18, 0.84)' }}
           >
-            {/* Dynamic 7-Chapter Campaign Selector (All Selectable Anytime) */}
+            {/* Dynamic 11-Chapter Saga Selector (Ch 1–7 Playable Anytime, Ch 8–11 Upcoming Floors) */}
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2 text-[11px] lg:text-xs text-[#8ea2a5]">
-                <span>Campaign ({TOTAL_CHAPTERS} Chapters)</span>
+                <span>
+                  Campaign ({TOTAL_CHAPTERS}/{MASTER_TOTAL_CHAPTERS} Live)
+                </span>
                 <span className="text-[#f0c574] font-medium truncate">
                   Ch {selectedChapter}: {activeChapter.title}
                 </span>
               </div>
-              <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
-                {CHAPTER_LIST.map((ch) => {
-                  const selected = selectedChapter === ch.id;
-                  const done = completedChapters.includes(ch.id);
+              <div className="grid grid-cols-6 gap-1">
+                {MASTER_CAMPAIGN_ROADMAP.map((entry) => {
+                  if (entry.playable) {
+                    const chId = entry.id as ChapterNumber;
+                    const selected = selectedChapter === chId;
+                    const done = completedChapters.includes(chId);
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => onSelectChapter(chId)}
+                        title={`Ch ${entry.id}: ${entry.title} (${entry.zoneLabel})`}
+                        className={`py-1.5 px-1 text-[10px] lg:text-[11px] font-medium rounded-sm border transition-colors cursor-pointer flex items-center justify-center gap-0.5 whitespace-nowrap ${
+                          selected
+                            ? 'bg-[#b8322b]/30 border-[#e06a62] text-[#fff1e2]'
+                            : 'bg-[#0a1316]/85 border-white/10 text-[#9db0b2] hover:border-white/25 hover:text-[#e8e2d5]'
+                        }`}
+                      >
+                        <span className="font-mono-tabular">Ch {entry.id}</span>
+                        {done && <Check className="w-2.5 h-2.5 text-[#74d19a] shrink-0" />}
+                      </button>
+                    );
+                  }
                   return (
-                    <button
-                      key={ch.id}
-                      type="button"
-                      onClick={() => onSelectChapter(ch.id)}
-                      className={`py-1.5 lg:py-2 px-1 text-[11px] lg:text-xs font-medium rounded-sm border transition-colors cursor-pointer flex items-center justify-center gap-1 whitespace-nowrap ${
-                        selected
-                          ? 'bg-[#b8322b]/30 border-[#e06a62] text-[#fff1e2]'
-                          : 'bg-[#0a1316]/85 border-white/10 text-[#9db0b2] hover:border-white/25 hover:text-[#e8e2d5]'
-                      }`}
+                    <div
+                      key={entry.id}
+                      title={`Upcoming · Ch ${entry.id}: ${entry.title} (${entry.zoneLabel})`}
+                      className="py-1.5 px-1 text-[10px] lg:text-[11px] font-medium rounded-sm border border-white/8 bg-[#070d10]/70 text-[#5d7174] flex items-center justify-center gap-0.5 whitespace-nowrap select-none"
                     >
-                      <span className="font-mono-tabular">Ch {ch.id}</span>
-                      {done && <Check className="w-3 h-3 text-[#74d19a] shrink-0" />}
-                    </button>
+                      <span className="font-mono-tabular">Ch {entry.id}</span>
+                      <Lock className="w-2.5 h-2.5 opacity-60 shrink-0" />
+                    </div>
                   );
                 })}
               </div>

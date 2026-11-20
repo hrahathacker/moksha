@@ -1,6 +1,10 @@
 import React from 'react';
 import { ShieldCheck, Play, X, Map as MapIcon } from 'lucide-react';
-import { CHAPTER_CONFIGS, CHAPTER_LIST, TOTAL_CHAPTERS } from '../chapters/chapterRegistry';
+import {
+  CHAPTER_CONFIGS,
+  MASTER_CAMPAIGN_ROADMAP,
+  MASTER_TOTAL_CHAPTERS,
+} from '../chapters/chapterRegistry';
 import { ChapterNumber, DIFFICULTY_CONFIGS, Difficulty } from '../game/types';
 
 interface MissionBriefingModalProps {
@@ -38,7 +42,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
           <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-2.5">
             <div className="space-y-0.5">
               <p className="text-[10px] sm:text-xs tracking-[0.2em] uppercase text-[#e5a94c] font-medium">
-                Chapter {chapter} of {TOTAL_CHAPTERS} · {diffConfig.label}
+                Chapter {chapter} of {MASTER_TOTAL_CHAPTERS} · {diffConfig.label}
               </p>
               <h2 className="font-display text-lg sm:text-2xl font-bold text-[#f4ede0] tracking-wide">
                 {chapterMeta.title}{' '}
@@ -75,23 +79,35 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
             ))}
           </div>
 
-          {/* Dynamic Campaign Roadmap Strip */}
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
-            {CHAPTER_LIST.map((ch) => {
+          {/* Dynamic 11-Chapter Saga Roadmap Strip */}
+          <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+            {MASTER_CAMPAIGN_ROADMAP.map((ch) => {
               const active = ch.id === chapter;
               return (
                 <div
                   key={ch.id}
-                  className="p-2 rounded-sm border space-y-0.5"
+                  className="p-1.5 sm:p-2 rounded-sm border space-y-0.5"
                   style={{
-                    backgroundColor: active ? 'rgba(184, 50, 43, 0.22)' : '#0b1417',
-                    borderColor: active ? 'rgba(229, 169, 76, 0.65)' : 'rgba(255, 255, 255, 0.1)',
+                    backgroundColor: active
+                      ? 'rgba(184, 50, 43, 0.22)'
+                      : ch.playable
+                        ? '#0b1417'
+                        : '#080e10',
+                    borderColor: active
+                      ? 'rgba(229, 169, 76, 0.65)'
+                      : ch.playable
+                        ? 'rgba(255, 255, 255, 0.1)'
+                        : 'rgba(255, 255, 255, 0.06)',
+                    opacity: ch.playable ? 1 : 0.62,
                   }}
                 >
-                  <div className="text-[9px] sm:text-[10px] font-mono-tabular uppercase text-[#e5a94c]">
-                    Ch {ch.id}
+                  <div className="flex items-center justify-between gap-1 text-[9px] font-mono-tabular uppercase">
+                    <span className={ch.playable ? 'text-[#e5a94c]' : 'text-[#6c8083]'}>
+                      Ch {ch.id}
+                    </span>
+                    <span className="text-[8px] text-[#7c9498] truncate">{ch.zoneLabel}</span>
                   </div>
-                  <div className="text-[10px] sm:text-xs font-semibold text-[#f3e6cc] leading-tight truncate">
+                  <div className="text-[10px] font-semibold text-[#f3e6cc] leading-tight truncate">
                     {ch.title}
                   </div>
                 </div>
@@ -99,7 +115,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
             })}
           </div>
 
-          {/* Live Map & Controls Strip */}
+          {/* Live Multi-Floor Radar & Controls Strip */}
           <div className="p-2.5 rounded-sm border border-[#6ea8b5]/25 bg-[#0c191d] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#b8ccce]">
             <div className="flex items-center gap-1.5">
               <MapIcon className="w-3.5 h-3.5 text-[#f3bd60] shrink-0" />
@@ -108,7 +124,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
                   ? 'Crouch behind logs to evade Shadow Crawlers · Equip Trishul at Shiva Shrine · Shatter 3 Runes & defeat Aghori Dwarpal'
                   : isOutdoor
                     ? 'Golden pin = Next Objective · Jump over Thorns & Black Scorpions · Auto Checkpoints'
-                    : 'Red diamond = Ghost · Amber dot = Task · Tap Radar to expand'}
+                    : 'Auto Multi-Floor Radar (Ground / 1st Floor / Tahkhana) · Crawl Prone under Beds & Tables to hide'}
               </span>
             </div>
             <div className="flex items-center gap-1.5 text-[#7cc2cd]">

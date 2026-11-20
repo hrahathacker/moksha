@@ -58,7 +58,8 @@ export interface HingedDoorRig {
 }
 
 export interface FlashlightRig {
-  viewGroup: THREE.Group;
+  viewGroup: THREE.Group; // Left Hand — Vintage Indian Metal Torch
+  rightHandGroup: THREE.Group; // Right Hand — Sacred Iron Trishul / Melee Weapon
   flashlightBodyGroup: THREE.Group;
   trishulGroup: THREE.Group;
   trishulFlameMesh: THREE.Mesh;
@@ -1665,11 +1666,15 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
   trishulFlameLight.castShadow = false;
   trishulGroup.add(trishulFlameLight);
 
-  viewGroup.add(trishulGroup);
+  // Right-Hand group holds melee weapons (Sacred Iron Trishul in Ch 2) independently of Left-Hand Torch
+  const rightHandGroup = new THREE.Group();
+  rightHandGroup.position.set(0.28, -0.22, -0.44);
+  rightHandGroup.rotation.set(0.06, -0.09, 0.05);
+  rightHandGroup.add(trishulGroup);
 
-  // Position in lower-right foreground of FPS camera
-  viewGroup.position.set(0.28, -0.22, -0.44);
-  viewGroup.rotation.set(0.06, -0.09, 0.05);
+  // Position Vintage Metal Torch in the LEFT HAND (lower-left foreground of FPS camera)
+  viewGroup.position.set(-0.28, -0.22, -0.44);
+  viewGroup.rotation.set(0.06, 0.09, -0.05);
 
   // 6. Dual-layer warm tungsten volumetric translucent beam cone
   const outerBeamGeo = new THREE.ConeGeometry(0.96, 5.8, 18, 1, true);
@@ -1799,9 +1804,9 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
   sparkLight.castShadow = false;
   viewGroup.add(sparkLight);
 
-  // 9. Warm tungsten directional SpotLight contrasting against cold moonlit teal haze
+  // 9. Warm tungsten directional SpotLight originating from Left-Hand Torch contrasting against cold teal haze
   const spotLight = new THREE.SpotLight(0xffe0a8, 8.6, 24, Math.PI / 4.7, 0.58, 1.48);
-  spotLight.position.set(0.18, -0.14, -0.25);
+  spotLight.position.set(-0.18, -0.14, -0.25);
   spotLight.target.position.set(0, -0.05, -6);
   spotLight.castShadow = false;
   spotLight.shadow.mapSize.width = 512;
@@ -1812,15 +1817,24 @@ export function createFlashlightViewModel(textures: ProceduralTexturePack): Flas
 
   const setWeaponMode = (mode: 'flashlight' | 'trishul') => {
     const isTrishul = mode === 'trishul';
-    flashlightBodyGroup.visible = !isTrishul;
+    // Dual-Hand: Left hand ALWAYS keeps the Vintage Torch; Right hand equips Sacred Trishul when active!
+    flashlightBodyGroup.visible = true;
     trishulGroup.visible = isTrishul;
-    if (!isTrishul) {
+    rightHandGroup.visible = isTrishul;
+    if (isTrishul) {
+      rightHandGroup.add(sparkGroup);
+      rightHandGroup.add(sparkLight);
+    } else {
+      viewGroup.add(sparkGroup);
+      viewGroup.add(sparkLight);
       trishulFlameLight.intensity = 0;
     }
   };
+  rightHandGroup.visible = false;
 
   return {
     viewGroup,
+    rightHandGroup,
     flashlightBodyGroup,
     trishulGroup,
     trishulFlameMesh,

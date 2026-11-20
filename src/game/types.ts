@@ -66,10 +66,13 @@ export interface ChapterConfig {
   completionText: string;
 }
 
+export type RadarFloorLevel = 'outdoor' | 'jungle' | 'basement' | 'ground' | 'first';
+
 export interface MinimapObjective {
   id: string;
   x: number;
   z: number;
+  y?: number;
   label: string;
   kind:
     | 'diya'
@@ -116,22 +119,27 @@ export interface MinimapLandmark {
 
 export interface MinimapData {
   mode: 'haveli' | 'outdoor' | 'forest';
+  floorLevel?: RadarFloorLevel;
   playerX: number;
+  playerY?: number;
   playerZ: number;
   playerYaw: number;
   ghostX: number;
+  ghostY?: number;
   ghostZ: number;
   ghostYaw: number;
   ghostRoom: string;
   ghostDistance: number;
   objectives: MinimapObjective[];
-  almirahs: Array<{ id: string; x: number; z: number }>;
+  almirahs: Array<{ id: string; x: number; z: number; y?: number }>;
   dogX?: number;
   dogZ?: number;
   pawTrailVisible?: boolean;
   pawTrail?: Array<{ x: number; z: number }>;
   landmarks?: MinimapLandmark[];
-  enemies?: Array<{ id: string; x: number; z: number; isBoss?: boolean }>;
+  enemies?: Array<{ id: string; x: number; z: number; y?: number; isBoss?: boolean }>;
+  firstFloorLocked?: boolean;
+  basementLocked?: boolean;
 }
 
 export interface RitualItemMeta {

@@ -12,6 +12,13 @@ import {
   createRustedIronGate,
   createWoodenTable,
 } from './models';
+import {
+  BasementTrapdoorRig,
+  FirstFloorStairGateRig,
+  buildHaveliMultiFloorExpansion,
+  getHaveliFloorElevation,
+  getMultiFloorRoomName,
+} from './haveliMultiFloor';
 import { ProceduralTexturePack } from './textures';
 import { ChapterNumber, LORE_NOTES, LoreNoteData, PlayerStance, RitualItemId } from './types';
 
@@ -20,6 +27,8 @@ export interface AABBCollider {
   maxX: number;
   minZ: number;
   maxZ: number;
+  /** Floor band this collider belongs to (-1 = Tahkhana, 0 = Ground, 1 = 1st Floor). Defaults to 0. */
+  floorLevel?: -1 | 0 | 1;
   /** If set, player with (feetY + bodyHeight <= crawlUnderY) can crawl underneath (tables, charpai) */
   crawlUnderY?: number;
   /** If set, jumping player with (feetY >= maxY - 0.14) clears this low obstacle */
@@ -101,6 +110,8 @@ export interface HaveliWorld {
   havanKund: HavanKundRig;
   almirahs: AlmirahRig[];
   hingedDoors: HingedDoorRig[];
+  firstFloorGate: FirstFloorStairGateRig;
+  trapdoor: BasementTrapdoorRig;
   ritualItems: RitualWorldItem[];
   notes: WorldNoteProp[];
   shrineDiyas: ShrineDiyaProp[];
@@ -109,7 +120,8 @@ export interface HaveliWorld {
   waypoints: WaypointNode[];
   flickerLights: Array<{ light: THREE.PointLight; baseIntensity: number; phase: number; flame?: THREE.Mesh }>;
   emberEmitters: THREE.Vector3[];
-  getRoomName: (x: number, z: number) => string;
+  getRoomName: (x: number, z: number, feetY?: number) => string;
+  getFloorElevation: (x: number, z: number, currentFeetY: number) => number;
   hasLineOfSight: (a: THREE.Vector3, b: THREE.Vector3) => boolean;
   resolvePlayerCollision: (
     pos: THREE.Vector3,
@@ -118,8 +130,14 @@ export interface HaveliWorld {
     bodyHeight?: number,
     ignoreDoors?: boolean
   ) => void;
-  hasHeadroomAt: (x: number, z: number, radius: number, targetHeight: number) => boolean;
-  evaluateStealthCover: (x: number, z: number, stance: PlayerStance, out: StealthCoverCheck) => StealthCoverCheck;
+  hasHeadroomAt: (x: number, z: number, radius: number, targetHeight: number, feetY?: number) => boolean;
+  evaluateStealthCover: (
+    x: number,
+    z: number,
+    stance: PlayerStance,
+    out: StealthCoverCheck,
+    feetY?: number
+  ) => StealthCoverCheck;
   applyQualityMaterials: (isLowQuality: boolean) => void;
   randomizeItemSpawns: () => void;
   configureForChapter: (chapter: ChapterNumber) => void;
@@ -290,31 +308,43 @@ export function buildHaveliWorld(
   };
 
   // =========================================================
-  // 1. FLOOR & CEILING (OPEN NIGHT SKY ABOVE CENTRAL AANGAN)
+  // 1. FLOOR & 1ST-FLOOR SLAB (STAIRWELL CUTOUTS + OPEN SKY AANGAN)
   // =========================================================
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(32, 32), stoneFloorMat);
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  root.add(floor);
+  // Ground floor segmented cleanly around SW Tahkhana Stairwell (x: -11.8..-9.4, z: 8.4..13.8)
+  const addGroundSlab = (x: number, z: number, w: number, d: number) => {
+    const slab = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stoneFloorMat);
+    slab.rotation.x = -Math.PI / 2;
+    slab.position.set(x, 0, z);
+    slab.receiveShadow = true;
+    root.add(slab);
+  };
+  addGroundSlab(0, -3.8, 32, 24.4);      // Main north & central floor (z: -16..+8.4)
+  addGroundSlab(3.3, 12.2, 25.4, 7.6);   // South-Center & East floor (x: -9.4..+16, z: 8.4..16)
+  addGroundSlab(-13.9, 12.2, 4.2, 7.6);  // Far SW floor west of stairs (x: -16..-11.8)
+  addGroundSlab(-10.6, 14.9, 2.4, 2.2);  // South lip behind SW stairs (z: 13.8..16)
 
-  // Roof slabs around perimeter leaving central Aangan (-5.2..5.2, -5.2..5.2) open to moonlit sky!
+  // 1st-Floor walkable deck slabs around perimeter leaving Central Aangan (-5.2..5.2) AND
+  // NE Grand Wooden Stairwell (x: 9.4..11.8, z: -13.6..-8.4) cleanly open!
   const addRoof = (x: number, z: number, w: number, d: number) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), ceilingMat);
-    m.position.set(x, WALL_H + 0.12, z);
+    m.position.set(x, WALL_H + 0.125, z);
+    m.receiveShadow = true;
     root.add(m);
   };
-  addRoof(0, -10.6, 32, 10.8); // North wing + North veranda
-  addRoof(0, 10.6, 32, 10.8);  // South wing + South veranda
-  addRoof(-10.6, 0, 10.8, 10.4); // West wing + West veranda
-  addRoof(10.6, 0, 10.8, 10.4);  // East wing + East veranda
+  addRoof(-3.3, -10.6, 25.4, 10.8); // North wing west of NE stairwell (x: -16..+9.4)
+  addRoof(13.9, -10.6, 4.2, 10.8);  // Far NE slab east of stairwell (x: 11.8..16)
+  addRoof(10.6, -14.8, 2.4, 2.4);   // 1st floor north landing at top of NE stairs (z: -16..-13.6)
+  addRoof(10.6, -6.8, 2.4, 3.2);    // Slab south of NE stairwell (z: -8.4..-5.2)
+  addRoof(0, 10.6, 32, 10.8);       // South wing + South terrace
+  addRoof(-10.6, 0, 10.8, 10.4);    // West wing (Bridal Chamber)
+  addRoof(10.6, 0, 10.8, 10.4);     // East wing (Guest Room)
 
-  // Double-height upper courtyard walls + ornate carved jali balustrade balcony (matching Reference 1)
-  const upperBalconyY = WALL_H + 0.15;
-  const balconyH = 1.45;
+  // Ornate carved Jali balustrade balcony framing the open 1st Floor Gallery overlooking Central Aangan
+  const upperBalconyY = WALL_H + 0.22;
+  const balconyH = 1.2;
   const sharedJaliPlaneGeo = new THREE.PlaneGeometry(10.4, balconyH);
   const sharedBalconyRailGeo = getBoxGeo(10.55, 0.12, 0.18);
   const sharedBalconyLedgeGeo = getBoxGeo(10.6, 0.22, 0.35);
-  const sharedUpperWallGeo = getBoxGeo(12.8, 3.2, 0.3);
 
   const addUpperCourtyardEdge = (x: number, z: number, _len: number, rotY: number) => {
     const g = new THREE.Group();
@@ -332,10 +362,6 @@ export function buildHaveliWorld(
     const baseLedge = new THREE.Mesh(sharedBalconyLedgeGeo, plasterMat);
     baseLedge.position.y = 0;
     g.add(baseLedge);
-
-    const upperWall = new THREE.Mesh(sharedUpperWallGeo, plasterMat);
-    upperWall.position.set(0, 1.5, -1.6);
-    g.add(upperWall);
 
     root.add(g);
   };
@@ -1062,16 +1088,39 @@ export function buildHaveliWorld(
   });
 
   // =========================================================
-  // 10. COLLISION, ROOM NAME & LINE-OF-SIGHT HELPERS
+  // 9B. MULTI-FLOOR EXPANSION (GROUND HIDING FURNITURE + 1ST FLOOR + UNDERGROUND TAHKHANA)
   // =========================================================
-  const getRoomName = (x: number, z: number): string => {
-    if (z < -7.5 && Math.abs(x) < 7.3) return 'Pooja Room';
-    if (z > 7.5 && Math.abs(x) < 7.3) return 'Storeroom';
-    if (x < -7.5 && Math.abs(z) < 7.3) return 'Master Bedroom';
-    if (x > 7.5 && Math.abs(z) < 7.3) return 'Old Kitchen';
-    if (Math.abs(x) <= 6.2 && Math.abs(z) <= 6.2) return 'Central Aangan';
-    return 'Arched Corridor';
+  const multiFloor = buildHaveliMultiFloorExpansion(root, textures, isLowQuality, {
+    plasterMat,
+    stoneFloorMat,
+    woodMat,
+    ceilingMat,
+  });
+  multiFloor.colliders.forEach((c) => colliders.push(c));
+  multiFloor.flickerLights.forEach((fl) => flickerLights.push(fl));
+  const firstFloorGate = multiFloor.firstFloorGate;
+  const trapdoor = multiFloor.trapdoor;
+
+  // =========================================================
+  // 10. COLLISION, MULTI-FLOOR ELEVATION, ROOM NAME & LINE-OF-SIGHT HELPERS
+  // =========================================================
+  const getFloorBand = (feetY: number): -1 | 0 | 1 => {
+    if (feetY >= 2.35) return 1;
+    if (feetY <= -1.9) return -1;
+    return 0;
   };
+
+  const getFloorElevation = (x: number, z: number, currentFeetY: number): number =>
+    getHaveliFloorElevation(
+      x,
+      z,
+      currentFeetY,
+      !trapdoor.isLocked && trapdoor.openAmount > 0.45,
+      !firstFloorGate.isLocked && firstFloorGate.openAmount > 0.45
+    );
+
+  const getRoomName = (x: number, z: number, feetY = 0): string =>
+    getMultiFloorRoomName(x, z, feetY);
 
   const resolvePlayerCollision = (
     pos: THREE.Vector3,
@@ -1083,6 +1132,10 @@ export function buildHaveliWorld(
     // Hard outer perimeter clamp
     pos.x = Math.max(-14.3, Math.min(14.3, pos.x));
     pos.z = Math.max(-14.3, Math.min(14.3, pos.z));
+
+    const activeBand = getFloorBand(feetY);
+    const floorBaseY = activeBand === 1 ? 4.1 : activeBand === -1 ? -4.2 : 0;
+    const localFeetY = feetY - floorBaseY;
 
     const pushOutBox = (box: { minX: number; maxX: number; minZ: number; maxZ: number }) => {
       const closestX = Math.max(box.minX, Math.min(pos.x, box.maxX));
@@ -1114,17 +1167,29 @@ export function buildHaveliWorld(
     for (let iter = 0; iter < 2; iter++) {
       for (let i = 0; i < colliders.length; i++) {
         const box = colliders[i];
-        if (box.crawlUnderY !== undefined && feetY + bodyHeight <= box.crawlUnderY) {
+        const boxFloor = box.floorLevel ?? 0;
+        if (boxFloor !== activeBand) continue;
+        if (box.crawlUnderY !== undefined && localFeetY + bodyHeight <= box.crawlUnderY) {
           continue;
         }
-        if (box.maxY !== undefined && feetY >= box.maxY - 0.14) {
+        if (box.maxY !== undefined && localFeetY >= box.maxY - 0.14) {
           continue;
         }
         pushOutBox(box);
       }
 
-      // Dynamic collision against closed hinged wing doors
-      if (!ignoreDoors) {
+      // Solid collision blockers for locked/closed Floor Transition Gates (1st Floor Iron Gate & Basement Trapdoor)
+      if (activeBand === 0) {
+        if (firstFloorGate.isLocked || firstFloorGate.openAmount < 0.45) {
+          pushOutBox(firstFloorGate.closedBox);
+        }
+        if (trapdoor.isLocked) {
+          pushOutBox(trapdoor.lockedBox);
+        }
+      }
+
+      // Dynamic collision against closed hinged wing doors (Ground Floor)
+      if (!ignoreDoors && activeBand === 0) {
         for (let d = 0; d < hingedDoors.length; d++) {
           const door = hingedDoors[d];
           if (door.openAmount < 0.42) {
@@ -1135,11 +1200,19 @@ export function buildHaveliWorld(
     }
   };
 
-  /** Checks whether the player has vertical clearance to stand/crouch up (prevents clipping into tabletops/charpai). */
-  const hasHeadroomAt = (x: number, z: number, radius: number, targetHeight: number): boolean => {
+  /** Checks whether the player has vertical clearance to stand/crouch up (prevents clipping into tabletops/beds). */
+  const hasHeadroomAt = (
+    x: number,
+    z: number,
+    radius: number,
+    targetHeight: number,
+    feetY = 0
+  ): boolean => {
+    const activeBand = getFloorBand(feetY);
     const rSq = (radius * 0.85) * (radius * 0.85);
     for (let i = 0; i < colliders.length; i++) {
       const box = colliders[i];
+      if ((box.floorLevel ?? 0) !== activeBand) continue;
       if (box.crawlUnderY === undefined) continue;
       if (targetHeight <= box.crawlUnderY) continue;
       const cx = Math.max(box.minX, Math.min(x, box.maxX));
@@ -1158,17 +1231,20 @@ export function buildHaveliWorld(
     x: number,
     z: number,
     stance: PlayerStance,
-    out: StealthCoverCheck
+    out: StealthCoverCheck,
+    feetY = 0
   ): StealthCoverCheck => {
     out.underFurniture = false;
     out.nearCover = false;
     if (stance === 'standing') return out;
 
+    const activeBand = getFloorBand(feetY);
     const coverDistSq = 0.88 * 0.88;
     const underPad = 0.14;
 
     for (let i = 0; i < colliders.length; i++) {
       const box = colliders[i];
+      if ((box.floorLevel ?? 0) !== activeBand) continue;
       if (stance === 'prone' && box.crawlUnderY !== undefined) {
         if (
           x >= box.minX - underPad &&
@@ -1194,9 +1270,10 @@ export function buildHaveliWorld(
     return out;
   };
 
-  // Fast 2D segment-vs-AABB ray check against structural full-height walls for Ghost vision
+  // Fast 2D segment-vs-AABB ray check against Ground Floor structural walls for Ghost vision
   const wallColliders = colliders.filter(
     (c) =>
+      (c.floorLevel ?? 0) === 0 &&
       c.crawlUnderY === undefined &&
       c.maxY === undefined &&
       (c.maxX - c.minX > 1.8 || c.maxZ - c.minZ > 1.8)
@@ -1252,6 +1329,30 @@ export function buildHaveliWorld(
   };
 
   const configureForChapter = (chapter: ChapterNumber) => {
+    // Automatic Chapter-Based Floor & Gate Unlock Schedule:
+    // - Chapter 3: Ground Floor only (1st Floor Stair Gate & Basement Trapdoor LOCKED)
+    // - Chapters 4–5: Ground Floor + 1st Floor unlocked (Basement Trapdoor LOCKED)
+    // - Chapters 6–11: All indoor zones unlocked (Ground Floor, 1st Floor & Underground Tahkhana)
+    const firstFloorUnlocked = chapter >= 4;
+    const basementUnlocked = chapter >= 6;
+
+    firstFloorGate.isLocked = !firstFloorUnlocked;
+    firstFloorGate.isOpen = firstFloorUnlocked;
+    firstFloorGate.openAmount = firstFloorUnlocked ? 1 : 0;
+    firstFloorGate.rattleTimer = 0;
+    firstFloorGate.lockChainGroup.visible = !firstFloorUnlocked;
+    firstFloorGate.lockChainGroup.rotation.z = 0;
+    firstFloorGate.leftPivot.rotation.y = firstFloorUnlocked ? -1.52 : 0;
+    firstFloorGate.rightPivot.rotation.y = firstFloorUnlocked ? 1.52 : 0;
+
+    trapdoor.isLocked = !basementUnlocked;
+    trapdoor.isOpen = basementUnlocked;
+    trapdoor.openAmount = basementUnlocked ? 1 : 0;
+    trapdoor.rattleTimer = 0;
+    trapdoor.lockChainGroup.visible = !basementUnlocked;
+    trapdoor.lockChainGroup.position.y = 0.13;
+    trapdoor.doorPivot.rotation.z = basementUnlocked ? -1.62 : 0;
+
     // Reset hinged wing doors: Storeroom starts open so player steps smoothly into Aangan; other 3 wings closed
     hingedDoors.forEach((door) => {
       const startOpen = door.id === 'door_storeroom';
@@ -1311,6 +1412,8 @@ export function buildHaveliWorld(
     havanKund,
     almirahs,
     hingedDoors,
+    firstFloorGate,
+    trapdoor,
     ritualItems,
     notes,
     shrineDiyas,
@@ -1320,6 +1423,7 @@ export function buildHaveliWorld(
     flickerLights,
     emberEmitters,
     getRoomName,
+    getFloorElevation,
     hasLineOfSight,
     resolvePlayerCollision,
     hasHeadroomAt,

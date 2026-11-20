@@ -36,6 +36,7 @@ import {
   LoreNoteData,
   MinimapData,
   PlayerStance,
+  RadarFloorLevel,
   RITUAL_ITEMS,
   RitualItemId,
   StealthReason,
@@ -170,6 +171,7 @@ export class MokshaGameEngine {
   private lookLagYaw = 0;
   private lookLagPitch = 0;
   private interactImpulse = 0;
+  private torchHolsterAmount = 0;
 
   private walkBobPhase = 0;
   private footstepCooldown = 0;
@@ -296,6 +298,7 @@ export class MokshaGameEngine {
 
     this.flashlight = createFlashlightViewModel(this.textures);
     this.camera.add(this.flashlight.viewGroup);
+    this.camera.add(this.flashlight.rightHandGroup);
     this.camera.add(this.flashlight.spotLight);
     this.camera.add(this.flashlight.spotLight.target);
 
@@ -1009,6 +1012,7 @@ export class MokshaGameEngine {
     this.lookLagYaw = 0;
     this.lookLagPitch = 0;
     this.interactImpulse = 0;
+    this.torchHolsterAmount = 0;
     this.pickupBurstLife = 0;
     this.pickupBurstPoints.visible = false;
     this.pickupBurstLight.intensity = 0;
@@ -1179,7 +1183,13 @@ export class MokshaGameEngine {
     if (
       !this.isOutdoorActive() &&
       targetBodyH > currentBodyH &&
-      !this.world.hasHeadroomAt(this.playerPos.x, this.playerPos.z, 0.34, targetBodyH)
+      !this.world.hasHeadroomAt(
+        this.playerPos.x,
+        this.playerPos.z,
+        0.34,
+        targetBodyH,
+        this.playerFeetY
+      )
     ) {
       this.headroomBlockedTimer = 1.6;
       this.audio.playFlashlightClick();
@@ -1384,62 +1394,128 @@ export class MokshaGameEngine {
       return;
     }
 
-    // 3. Open or Close Creaking Hinged Haveli Wing Doors
-    for (const door of this.world.hingedDoors) {
-      const d = Math.hypot(
-        this.playerPos.x - door.interactPos.x,
-        this.playerPos.z - door.interactPos.z
-      );
-      if (d < 2.55) {
-        door.isOpen = !door.isOpen;
-        this.triggerInteractImpulse(0.9);
-        this.audio.playWoodCreak();
-        this.ghostAI.notifyNoise(door.interactPos, 8.5, this.stealthFactor);
-        this.emitHud();
-        return;
-      }
-    }
+    const onGroundFloor = Math.abs(this.playerFeetY) < 1.6;
 
-    // 4. Climb into nearby wooden Almirah
-    for (const alm of this.world.almirahs) {
-      const d = Math.hypot(this.playerPos.x - alm.exitPos.x, this.playerPos.z - alm.exitPos.z);
-      if (d < 1.95) {
-        this.hidingAlmirah = alm;
-        alm.doorSwingBoost = 0.72;
-        this.stance = 'standing';
-        this.playerFeetY = 0;
-        this.playerVelY = 0;
-        this.isGrounded = true;
-        this.touchInput.sprint = false;
-        this.playerPos.set(alm.insidePos.x, 1.56, alm.insidePos.z);
-        this.playerYaw = alm.facingYaw + Math.PI;
-        this.playerPitch = 0;
-        this.triggerInteractImpulse(0.85);
-        this.audio.playWoodCreak();
-        if (this.proximityIntensity > 0.35) {
-          this.audio.playPlayerReaction('hide');
+    // 3A. 1st Floor Staircase Iron Grille Gate (NE Corridor)
+    if (onGroundFloor) {
+      const gate = this.world.firstFloorGate;
+      if (
+        Math.hypot(this.playerPos.x - gate.interactPos.x, this.playerPos.z - gate.interactPos.z) <
+        2.5
+      ) {
+        if (gate.isLocked) {
+          gate.rattleTimer = 0.55;
+          this.triggerInteractImpulse(0.55);
+          this.audio.playLockedChainRattle();
+          this.audio.showHintSubtitle(
+            'यह रास्ता अभी बंद है — आगे के अध्याय में खुलेगा।',
+            'Yeh raasta abhi band hai — aage ke adhyay mein khulega.',
+            3800
+          );
+          this.emitHud();
+          return;
         }
-        this.ghostAI.notifyPlayerEnteredAlmirah(this.playerPos);
+        gate.isOpen = !gate.isOpen;
+        this.triggerInteractImpulse(0.92);
+        this.audio.playGateUnlock();
+        this.ghostAI.notifyNoise(gate.interactPos, 9.0, this.stealthFactor);
         this.emitHud();
         return;
       }
     }
 
-    // 5. Read nearby Hinglish Lore Note (tracks Chapter 3 clues cleanly via hook)
-    for (const note of this.world.notes) {
-      const d = Math.hypot(this.playerPos.x - note.position.x, this.playerPos.z - note.position.z);
-      if (d < 2.2) {
-        const wasUnread = !note.read;
-        note.read = true;
-        this.activeChapter.onNoteRead?.(ctx, wasUnread, note.position);
-        this.triggerInteractImpulse(0.65);
-        this.activeNote = note.data;
-        this.phase = 'note';
-        this.keys.clear();
-        this.releasePointerLock();
-        this.audio.playItemPickup();
+    // 3B. Open or Close Underground Tahkhana Stone Trapdoor (SW Corridor)
+    if (onGroundFloor) {
+      const td = this.world.trapdoor;
+      if (
+        Math.hypot(this.playerPos.x - td.interactPos.x, this.playerPos.z - td.interactPos.z) < 2.5
+      ) {
+        if (td.isLocked) {
+          td.rattleTimer = 0.55;
+          this.triggerInteractImpulse(0.55);
+          this.audio.playLockedChainRattle();
+          this.audio.showHintSubtitle(
+            'यह रास्ता अभी बंद है — आगे के अध्याय में खुलेगा।',
+            'Yeh raasta abhi band hai — aage ke adhyay mein khulega.',
+            3800
+          );
+          this.emitHud();
+          return;
+        }
+        td.isOpen = !td.isOpen;
+        this.triggerInteractImpulse(0.95);
+        this.audio.playWoodCreak();
+        this.ghostAI.notifyNoise(td.interactPos, 9.0, this.stealthFactor);
         this.emitHud();
         return;
+      }
+    }
+
+    // 4. Open or Close Creaking Hinged Haveli Wing Doors (Ground Floor)
+    if (onGroundFloor) {
+      for (const door of this.world.hingedDoors) {
+        const d = Math.hypot(
+          this.playerPos.x - door.interactPos.x,
+          this.playerPos.z - door.interactPos.z
+        );
+        if (d < 2.55) {
+          door.isOpen = !door.isOpen;
+          this.triggerInteractImpulse(0.9);
+          this.audio.playWoodCreak();
+          this.ghostAI.notifyNoise(door.interactPos, 8.5, this.stealthFactor);
+          this.emitHud();
+          return;
+        }
+      }
+    }
+
+    // 5. Climb into nearby wooden Almirah (Ground Floor)
+    if (onGroundFloor) {
+      for (const alm of this.world.almirahs) {
+        const d = Math.hypot(this.playerPos.x - alm.exitPos.x, this.playerPos.z - alm.exitPos.z);
+        if (d < 1.95) {
+          this.hidingAlmirah = alm;
+          alm.doorSwingBoost = 0.72;
+          this.stance = 'standing';
+          this.playerFeetY = 0;
+          this.playerVelY = 0;
+          this.isGrounded = true;
+          this.touchInput.sprint = false;
+          this.playerPos.set(alm.insidePos.x, 1.56, alm.insidePos.z);
+          this.playerYaw = alm.facingYaw + Math.PI;
+          this.playerPitch = 0;
+          this.triggerInteractImpulse(0.85);
+          this.audio.playWoodCreak();
+          if (this.proximityIntensity > 0.35) {
+            this.audio.playPlayerReaction('hide');
+          }
+          this.ghostAI.notifyPlayerEnteredAlmirah(this.playerPos);
+          this.emitHud();
+          return;
+        }
+      }
+    }
+
+    // 6. Read nearby Hinglish Lore Note (Ground Floor)
+    if (onGroundFloor) {
+      for (const note of this.world.notes) {
+        const d = Math.hypot(
+          this.playerPos.x - note.position.x,
+          this.playerPos.z - note.position.z
+        );
+        if (d < 2.2) {
+          const wasUnread = !note.read;
+          note.read = true;
+          this.activeChapter.onNoteRead?.(ctx, wasUnread, note.position);
+          this.triggerInteractImpulse(0.65);
+          this.activeNote = note.data;
+          this.phase = 'note';
+          this.keys.clear();
+          this.releasePointerLock();
+          this.audio.playItemPickup();
+          this.emitHud();
+          return;
+        }
       }
     }
   }
@@ -1462,28 +1538,59 @@ export class MokshaGameEngine {
       return { text: null, key: 'E' };
     }
 
-    for (const door of this.world.hingedDoors) {
+    if (Math.abs(this.playerFeetY) < 1.6) {
+      const gate = this.world.firstFloorGate;
       if (
-        Math.hypot(this.playerPos.x - door.interactPos.x, this.playerPos.z - door.interactPos.z) <
-        2.55
+        Math.hypot(this.playerPos.x - gate.interactPos.x, this.playerPos.z - gate.interactPos.z) <
+        2.5
       ) {
         return {
-          text: `${door.isOpen ? 'Close' : 'Open'} ${door.roomName} Door`,
+          text: gate.isLocked
+            ? 'Locked Iron Grille Gate (1st Floor)'
+            : `${gate.isOpen ? 'Close' : 'Open'} 1st Floor Stair Gate`,
           key: 'E',
         };
       }
-    }
 
-    for (const alm of this.world.almirahs) {
-      if (Math.hypot(this.playerPos.x - alm.exitPos.x, this.playerPos.z - alm.exitPos.z) < 1.95) {
-        return { text: 'Hide inside Wooden Almirah', key: 'E' };
+      const td = this.world.trapdoor;
+      if (
+        Math.hypot(this.playerPos.x - td.interactPos.x, this.playerPos.z - td.interactPos.z) < 2.5
+      ) {
+        return {
+          text: td.isLocked
+            ? 'Locked Chained Trapdoor (Tahkhana)'
+            : `${td.isOpen ? 'Close' : 'Open'} Tahkhana Trapdoor`,
+          key: 'E',
+        };
       }
-    }
 
-    for (const note of this.world.notes) {
-      if (Math.hypot(this.playerPos.x - note.position.x, this.playerPos.z - note.position.z) < 2.2) {
-        const badge = this.activeChapter.getNotePromptBadge?.(ctx, note.read) ?? '';
-        return { text: `Read Note${badge}: ${note.data.title}`, key: 'E' };
+      for (const door of this.world.hingedDoors) {
+        if (
+          Math.hypot(this.playerPos.x - door.interactPos.x, this.playerPos.z - door.interactPos.z) <
+          2.55
+        ) {
+          return {
+            text: `${door.isOpen ? 'Close' : 'Open'} ${door.roomName} Door`,
+            key: 'E',
+          };
+        }
+      }
+
+      for (const alm of this.world.almirahs) {
+        if (
+          Math.hypot(this.playerPos.x - alm.exitPos.x, this.playerPos.z - alm.exitPos.z) < 1.95
+        ) {
+          return { text: 'Hide inside Wooden Almirah', key: 'E' };
+        }
+      }
+
+      for (const note of this.world.notes) {
+        if (
+          Math.hypot(this.playerPos.x - note.position.x, this.playerPos.z - note.position.z) < 2.2
+        ) {
+          const badge = this.activeChapter.getNotePromptBadge?.(ctx, note.read) ?? '';
+          return { text: `Read Note${badge}: ${note.data.title}`, key: 'E' };
+        }
       }
     }
 
@@ -1676,6 +1783,39 @@ export class MokshaGameEngine {
       door.rightPivot.rotation.y = -door.openAmount * 1.56;
     }
 
+    // Smoothly articulate 1st Floor Iron Grille Gate + locked chain rattle
+    const gate = this.world.firstFloorGate;
+    gate.lockChainGroup.visible = gate.isLocked;
+    if (gate.rattleTimer > 0) {
+      gate.rattleTimer = Math.max(0, gate.rattleTimer - dt);
+      const decay = gate.rattleTimer / 0.55;
+      const shake = Math.sin(timeSec * 52) * 0.055 * decay;
+      gate.leftPivot.rotation.y = shake;
+      gate.rightPivot.rotation.y = -shake;
+      gate.lockChainGroup.rotation.z = Math.sin(timeSec * 64) * 0.18 * decay;
+    } else {
+      const gateTarget = !gate.isLocked && gate.isOpen ? 1 : 0;
+      gate.openAmount = THREE.MathUtils.damp(gate.openAmount, gateTarget, 5.5, dt);
+      gate.leftPivot.rotation.y = -gate.openAmount * 1.52;
+      gate.rightPivot.rotation.y = gate.openAmount * 1.52;
+      gate.lockChainGroup.rotation.z = 0;
+    }
+
+    // Smoothly articulate Tahkhana chained stone trapdoor + locked chain rattle
+    const td = this.world.trapdoor;
+    td.lockChainGroup.visible = td.isLocked;
+    if (td.rattleTimer > 0) {
+      td.rattleTimer = Math.max(0, td.rattleTimer - dt);
+      const decay = td.rattleTimer / 0.55;
+      td.doorPivot.rotation.z = -Math.abs(Math.sin(timeSec * 46)) * 0.045 * decay;
+      td.lockChainGroup.position.y = 0.13 + Math.abs(Math.sin(timeSec * 56)) * 0.025 * decay;
+    } else {
+      const tdTarget = !td.isLocked && td.isOpen ? 1 : 0;
+      td.openAmount = THREE.MathUtils.damp(td.openAmount, tdTarget, 5.5, dt);
+      td.doorPivot.rotation.z = -td.openAmount * 1.62;
+      td.lockChainGroup.position.y = 0.13;
+    }
+
     // Smoothly swing wooden Almirah shutters wide on entry/exit before creaking shut
     for (let i = 0; i < this.world.almirahs.length; i++) {
       const alm = this.world.almirahs[i];
@@ -1688,6 +1828,7 @@ export class MokshaGameEngine {
 
     // Live 3D atmospheric camera pan during Title, Story & Briefing modals
     if (this.phase === 'title' || this.phase === 'story' || this.phase === 'briefing') {
+      this.flashlight.rightHandGroup.visible = false;
       if (this.isForestActive()) {
         // Eerie Banyan & Peepal Forest overview facing the distant crimson-sealed Haveli Main Door
         const sway = Math.sin(timeSec * 0.22) * 2.4;
@@ -1724,11 +1865,11 @@ export class MokshaGameEngine {
       this.ghostAI.setTitleShowcasePose(timeSec, highDetail);
       this.flashlight.viewGroup.visible = true;
       this.flashlight.viewGroup.position.set(
-        0.28 + Math.cos(timeSec * 0.9) * 0.004,
+        -0.28 + Math.cos(timeSec * 0.9) * 0.004,
         -0.22 + Math.sin(timeSec * 1.8) * 0.005,
         -0.44
       );
-      this.flashlight.viewGroup.rotation.set(0.06, -0.09, 0.05);
+      this.flashlight.viewGroup.rotation.set(0.06, 0.09, -0.05);
       this.flashlight.spotLight.intensity = 6.8 + Math.sin(timeSec * 7.2) * 0.42;
       this.flashlight.beamMesh.visible = true;
       this.flashlight.innerBeamMesh.visible = true;
@@ -1814,6 +1955,7 @@ export class MokshaGameEngine {
       this.camera.lookAt(0, targetLookY, 0);
 
       this.flashlight.viewGroup.visible = false;
+      this.flashlight.rightHandGroup.visible = false;
       this.flashlight.spotLight.intensity = 0;
       this.flashlight.beamMesh.visible = false;
       this.flashlight.innerBeamMesh.visible = false;
@@ -1911,25 +2053,34 @@ export class MokshaGameEngine {
 
     const movementLocked = Boolean(this.activeChapter.isMovementLocked?.());
 
-    // Vertical Jump & Gravity Physics
+    // Vertical Jump, Gravity & Multi-Floor Staircase Elevation Physics (Tahkhana -4.2m / Ground 0m / 1st Floor +4.1m)
+    const groundY = isOutdoor
+      ? 0
+      : this.world.getFloorElevation(this.playerPos.x, this.playerPos.z, this.playerFeetY);
+
     if (!this.hidingAlmirah && !movementLocked) {
       if (!this.isGrounded || this.playerVelY > 0) {
         this.playerFeetY += this.playerVelY * dt;
         this.playerVelY -= GRAVITY * dt;
-        if (this.playerFeetY <= 0) {
+        if (this.playerFeetY <= groundY) {
           const impactSpeed = Math.abs(this.playerVelY);
-          this.playerFeetY = 0;
+          this.playerFeetY = groundY;
           this.playerVelY = 0;
           this.isGrounded = true;
           this.landingDip = -Math.min(0.16, 0.07 + impactSpeed * 0.015);
           this.audio.playJumpLand(Math.min(1.2, impactSpeed / 5.0));
-          if (!isOutdoor && !inGracePeriod) {
+          if (!isOutdoor && !inGracePeriod && Math.abs(this.playerFeetY) < 1.8) {
             this.ghostAI.notifyNoise(this.playerPos, config.hearingRange * 0.72, this.stealthFactor);
           }
         }
+      } else if (this.playerFeetY - groundY > 0.75) {
+        this.isGrounded = false;
+      } else {
+        this.playerFeetY = THREE.MathUtils.damp(this.playerFeetY, groundY, 20, dt);
+        this.playerVelY = 0;
       }
     } else {
-      this.playerFeetY = 0;
+      this.playerFeetY = groundY;
       this.playerVelY = 0;
       this.isGrounded = true;
     }
@@ -1944,7 +2095,7 @@ export class MokshaGameEngine {
       ? this.forestWorld.getZoneName(this.playerPos.x, this.playerPos.z)
       : isOutdoor
         ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
-        : this.world.getRoomName(this.playerPos.x, this.playerPos.z);
+        : this.world.getRoomName(this.playerPos.x, this.playerPos.z, this.playerFeetY);
 
     if (!this.hidingAlmirah && !movementLocked) {
       const mag = Math.hypot(moveForward, moveRight);
@@ -2034,7 +2185,8 @@ export class MokshaGameEngine {
         this.playerPos.x,
         this.playerPos.z,
         this.stance,
-        this.coverScratch
+        this.coverScratch,
+        this.playerFeetY
       );
       if (cover.underFurniture) {
         this.stealthReason = 'furniture';
@@ -2093,7 +2245,8 @@ export class MokshaGameEngine {
         ? Math.sin(this.walkBobPhase) * bobAmp
         : Math.sin(timeSec * 1.8) * bobAmp;
 
-    const finalCamY = Math.max(0.32, this.playerFeetY + this.currentEyeHeight + this.landingDip + bobY);
+    const finalCamY =
+      this.playerFeetY + Math.max(0.32, this.currentEyeHeight + this.landingDip + bobY);
     this.playerPos.y = finalCamY;
 
     // Smoothly damp Torch Bash camera recoil, turn inertia lag & interaction impulse
@@ -2235,25 +2388,85 @@ export class MokshaGameEngine {
     const interactRotX = -this.interactImpulse * 0.22;
     const interactRotZ = -this.interactImpulse * 0.15;
 
-    this.flashlight.viewGroup.visible = !this.hidingAlmirah && !this.cameraOverrideActive;
+    // Dual-Hand System:
+    // Left Hand holds the Vintage Indian Metal Torch (smoothly lowers/holsters when OFF or Crouching/Proning)
+    // Right Hand holds the Sacred Iron Trishul / melee weapon simultaneously when equipped
+    const targetHolster = !this.flashlightOn
+      ? 1.0
+      : this.stance === 'prone'
+        ? 0.56
+        : this.stance === 'crouching'
+          ? 0.3
+          : 0.0;
+    this.torchHolsterAmount = THREE.MathUtils.damp(this.torchHolsterAmount, targetHolster, 8.5, dt);
+    const holster = this.torchHolsterAmount;
+
+    const leftBashX = this.trishulEquipped ? 0 : -bashOffX;
+    const leftBashY = this.trishulEquipped ? 0 : bashOffY;
+    const leftBashZ = this.trishulEquipped ? 0 : bashOffZ;
+    const leftBashRotX = this.trishulEquipped ? 0 : bashRotX;
+    const leftBashRotY = this.trishulEquipped ? 0 : -bashRotY;
+    const leftBashRotZ = this.trishulEquipped ? 0 : -bashRotZ;
+
+    const showHands = !this.hidingAlmirah && !this.cameraOverrideActive;
+    this.flashlight.viewGroup.visible = showHands;
     this.flashlight.viewGroup.position.set(
-      0.28 + idleBreathX + handBobX + lagOffX + bashOffX,
+      -0.28 - idleBreathX + handBobX + lagOffX + leftBashX - holster * 0.04,
       -0.22 +
         idleBreathY +
         handBobY +
         jumpHandDrop +
         this.landingDip * 0.35 +
         lagOffY +
-        interactOffY +
-        (this.stance === 'prone' ? 0.03 : 0) +
-        bashOffY,
-      -0.44 + interactOffZ + bashOffZ
+        interactOffY -
+        holster * 0.24 +
+        leftBashY,
+      -0.44 + interactOffZ + holster * 0.09 + leftBashZ
     );
     this.flashlight.viewGroup.rotation.set(
-      0.06 + lagRotX + interactRotX + (isSprinting ? -0.07 : 0) + bashRotX,
-      -0.09 + lagRotY + bashRotY,
-      0.05 + lagRotZ + interactRotZ + (isMoving && this.isGrounded ? handBobX * 1.4 : 0) + bashRotZ
+      0.06 + lagRotX + interactRotX + (isSprinting ? -0.07 : 0) - holster * 0.72 + leftBashRotX,
+      0.09 + lagRotY + holster * 0.16 + leftBashRotY,
+      -0.05 +
+        lagRotZ -
+        interactRotZ +
+        (isMoving && this.isGrounded ? handBobX * 1.4 : 0) +
+        holster * 0.22 +
+        leftBashRotZ
     );
+
+    // Right Hand — Sacred Iron Trishul / Melee Weapon
+    this.flashlight.rightHandGroup.visible = showHands && this.trishulEquipped;
+    if (this.flashlight.rightHandGroup.visible) {
+      const rightBashX = this.trishulEquipped ? bashOffX : 0;
+      const rightBashY = this.trishulEquipped ? bashOffY : 0;
+      const rightBashZ = this.trishulEquipped ? bashOffZ : 0;
+      const rightBashRotX = this.trishulEquipped ? bashRotX : 0;
+      const rightBashRotY = this.trishulEquipped ? bashRotY : 0;
+      const rightBashRotZ = this.trishulEquipped ? bashRotZ : 0;
+
+      this.flashlight.rightHandGroup.position.set(
+        0.28 + idleBreathX - handBobX * 0.85 + lagOffX + rightBashX,
+        -0.22 +
+          idleBreathY +
+          handBobY +
+          jumpHandDrop +
+          this.landingDip * 0.35 +
+          lagOffY +
+          interactOffY +
+          (this.stance === 'prone' ? 0.02 : 0) +
+          rightBashY,
+        -0.44 + interactOffZ + rightBashZ
+      );
+      this.flashlight.rightHandGroup.rotation.set(
+        0.06 + lagRotX + interactRotX + (isSprinting ? -0.08 : 0) + rightBashRotX,
+        -0.09 + lagRotY + rightBashRotY,
+        0.05 +
+          lagRotZ +
+          interactRotZ -
+          (isMoving && this.isGrounded ? handBobX * 1.3 : 0) +
+          rightBashRotZ
+      );
+    }
 
     // Smoothly slide the metallic power switch nub on top of the torch
     const targetSwitchZ = this.flashlightOn ? -0.068 : -0.044;
@@ -2332,31 +2545,33 @@ export class MokshaGameEngine {
       this.audio.setTension(0, false);
     } else {
       // Update Ghost AI (scaled by current Chapter intensity + real stealth detection reduction + High/Low cloth wave)
+      // Ghost patrols Ground Floor; if player is exploring 1st Floor or Underground Tahkhana, prevent unfair cross-floor grabs
       const climaxActive = this.phase === 'climax';
       const chapterConfig = this.getChapterScaledConfig();
+      const onOtherFloor = Math.abs(this.playerFeetY) > 1.8;
       const ghostRes = this.ghostAI.update(
         dt,
         timeSec,
         this.playerPos,
         this.camera.quaternion,
-        torchLit,
-        this.hidingAlmirah !== null,
+        torchLit && !onOtherFloor,
+        this.hidingAlmirah !== null || onOtherFloor,
         climaxActive,
         inGracePeriod,
         chapterConfig,
-        this.stealthFactor,
-        this.isConcealed,
+        onOtherFloor ? 0.08 : this.stealthFactor,
+        this.isConcealed || onOtherFloor,
         highDetail
       );
 
       this.proximityIntensity = THREE.MathUtils.damp(
         this.proximityIntensity,
-        ghostRes.proximityIntensity,
+        onOtherFloor ? ghostRes.proximityIntensity * 0.25 : ghostRes.proximityIntensity,
         4.5,
         dt
       );
 
-      if (ghostRes.justStartedChase && !climaxActive) {
+      if (ghostRes.justStartedChase && !climaxActive && !onOtherFloor) {
         this.audio.playPlayerGasp();
       }
 
@@ -2386,8 +2601,8 @@ export class MokshaGameEngine {
       const kundBeacon = Boolean(this.activeChapter.isKundBeaconActive?.(chapterCtx));
       this.world.havanKund.update(timeSec, climaxActive, 0, kundBeacon);
 
-      // Catch check -> Jumpscare!
-      if (ghostRes.caughtPlayer) {
+      // Catch check -> Jumpscare! (Only when Ghost & Player are on the same floor)
+      if (ghostRes.caughtPlayer && !onOtherFloor) {
         this.phase = 'jumpscare';
         this.jumpscareTimer = 0;
         this.maxBpm = Math.max(this.maxBpm, 180);
@@ -2460,16 +2675,21 @@ export class MokshaGameEngine {
       }
       return {
         mode: 'forest',
+        floorLevel: 'jungle',
         playerX: this.playerPos.x,
+        playerY: this.playerFeetY,
         playerZ: this.playerPos.z,
         playerYaw: this.playerYaw,
         ghostX: boss.state !== 'hidden' && boss.state !== 'dead' ? boss.position.x : 0,
+        ghostY: 0,
         ghostZ: boss.state !== 'hidden' && boss.state !== 'dead' ? boss.position.z : -99,
         ghostYaw: boss.yaw,
         ghostRoom: 'Outer Courtyard',
         ghostDistance:
           boss.state !== 'hidden' && boss.state !== 'dead'
-            ? Math.round(Math.hypot(this.playerPos.x - boss.position.x, this.playerPos.z - boss.position.z))
+            ? Math.round(
+                Math.hypot(this.playerPos.x - boss.position.x, this.playerPos.z - boss.position.z)
+              )
             : 99,
         objectives,
         almirahs: [],
@@ -2483,10 +2703,13 @@ export class MokshaGameEngine {
     if (isVillage) {
       return {
         mode: 'outdoor',
+        floorLevel: 'outdoor',
         playerX: this.playerPos.x,
+        playerY: this.playerFeetY,
         playerZ: this.playerPos.z,
         playerYaw: this.playerYaw,
         ghostX: 0,
+        ghostY: 0,
         ghostZ: -99,
         ghostYaw: 0,
         ghostRoom: 'Haveli',
@@ -2501,6 +2724,9 @@ export class MokshaGameEngine {
       };
     }
 
+    const floorLevel: RadarFloorLevel =
+      this.playerFeetY < -1.5 ? 'basement' : this.playerFeetY >= 3.5 ? 'first' : 'ground';
+
     const ghostDist = Math.hypot(
       this.playerPos.x - this.ghostAI.position.x,
       this.playerPos.z - this.ghostAI.position.z
@@ -2508,20 +2734,26 @@ export class MokshaGameEngine {
 
     return {
       mode: 'haveli',
+      floorLevel,
       playerX: this.playerPos.x,
+      playerY: this.playerFeetY,
       playerZ: this.playerPos.z,
       playerYaw: this.playerYaw,
       ghostX: this.ghostAI.position.x,
+      ghostY: 0,
       ghostZ: this.ghostAI.position.z,
       ghostYaw: this.ghostAI.yaw,
-      ghostRoom: this.world.getRoomName(this.ghostAI.position.x, this.ghostAI.position.z),
+      ghostRoom: this.world.getRoomName(this.ghostAI.position.x, this.ghostAI.position.z, 0),
       ghostDistance: Math.round(ghostDist),
       objectives,
       almirahs: this.world.almirahs.map((a) => ({
         id: a.id,
         x: a.root.position.x,
+        y: a.root.position.y,
         z: a.root.position.z,
       })),
+      firstFloorLocked: this.world.firstFloorGate.isLocked,
+      basementLocked: this.world.trapdoor.isLocked,
     };
   }
 
@@ -2602,7 +2834,7 @@ export class MokshaGameEngine {
         ? this.forestWorld.getZoneName(this.playerPos.x, this.playerPos.z)
         : isOutdoor
           ? this.outdoorWorld.getZoneName(this.playerPos.x, this.playerPos.z)
-          : this.world.getRoomName(this.playerPos.x, this.playerPos.z),
+          : this.world.getRoomName(this.playerPos.x, this.playerPos.z, this.playerFeetY),
       climaxRemaining: this.climaxRemaining,
       elapsedSeconds: this.elapsedSeconds,
       jumpscaresSurvived: this.jumpscaresSurvived,

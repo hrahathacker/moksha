@@ -967,6 +967,22 @@ export function createChapter2(): ChapterModule {
         }
       }
 
+      // 4. Sealed Haveli Main Door remains locked until Aghori Dwarpal is defeated
+      if (
+        !fw.haveliDoorUnlocked &&
+        Math.hypot(ctx.playerPos.x - fw.haveliDoorPos.x, ctx.playerPos.z - fw.haveliDoorPos.z) < 4.5
+      ) {
+        ctx.triggerInteractImpulse(0.55);
+        ctx.audio.playLockedChainRattle();
+        ctx.audio.showHintSubtitle(
+          'यह रास्ता अभी बंद है — आगे के अध्याय में खुलेगा।',
+          'Yeh raasta abhi band hai — aage ke adhyay mein khulega.',
+          3800
+        );
+        ctx.emitHud();
+        return true;
+      }
+
       return false;
     },
 
@@ -1001,15 +1017,19 @@ export function createChapter2(): ChapterModule {
             return { text: `Shatter ${r.label} (ATTACK or USE)`, key: 'E' };
           }
         }
-        if (
-          Math.hypot(ctx.playerPos.x - fw.haveliDoorPos.x, ctx.playerPos.z - fw.haveliDoorPos.z) <
-          4.5
-        ) {
-          return {
-            text: `Sealed by Red Tantric Barrier — Shatter ${3 - runesBroken} Rune ${3 - runesBroken === 1 ? 'Stone' : 'Stones'}`,
-            key: '',
-          };
-        }
+      }
+
+      if (
+        !fw.haveliDoorUnlocked &&
+        Math.hypot(ctx.playerPos.x - fw.haveliDoorPos.x, ctx.playerPos.z - fw.haveliDoorPos.z) < 4.5
+      ) {
+        return {
+          text:
+            stage === 'boss_fight'
+              ? 'Haveli Main Door Locked — Defeat Aghori Dwarpal'
+              : `Locked Haveli Main Door — Shatter ${Math.max(0, 3 - runesBroken)} Rune ${3 - runesBroken === 1 ? 'Stone' : 'Stones'}`,
+          key: 'E',
+        };
       }
 
       return null;

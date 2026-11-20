@@ -34,9 +34,10 @@ import {
   HudSnapshot,
 } from './game/types';
 
+import introMusicUrl from './assets/theme_intro.mp3';
+
 const COMPLETED_STORAGE_KEY = 'moksha_completed_chapters_v3';
 const TOUCH_SENS_STORAGE_KEY = 'moksha_touch_sens_v1';
-const HOME_INTRO_SONG_URL = '/assets/aistudio/MOKSHA__Game_Intro_Rap__Chaurasi_Fix__2d20d95d.mp3';
 
 function loadTouchSensitivity(): number {
   try {
@@ -327,35 +328,70 @@ export default function App() {
     }
   }, [hud.phase]);
 
-  // Create persistent looping Home Screen Intro Rap audio element
+  // Create persistent looping Home Screen Intro Theme audio element bundled via Vite ES import
   useEffect(() => {
-    const bgm = new Audio(HOME_INTRO_SONG_URL);
+    const bgm: HTMLAudioElement = new Audio(introMusicUrl);
     bgm.loop = true;
     bgm.preload = 'auto';
+    bgm.setAttribute('playsinline', 'true');
+    bgm.load();
     titleBgmRef.current = bgm;
     return () => {
       bgm.pause();
       bgm.currentTime = 0;
-      bgm.src = '';
+      bgm.removeAttribute('src');
+      bgm.load();
       titleBgmRef.current = null;
     };
   }, []);
 
-  // Play/loop Home Intro Song on Title screen, sync volume/mute, and stop cleanly when entering game
+  // Play/loop Home Intro Song on Main Menu with Capacitor Android WebView first-touch unlock & smooth fade-out
   useEffect(() => {
     const bgm = titleBgmRef.current;
     if (!bgm) return;
 
     const targetVol = settings.muted ? 0 : Math.max(0, Math.min(1, settings.volume * 0.78));
-    bgm.volume = targetVol;
-    bgm.muted = settings.muted;
+    let cancelled = false;
+    let fadeFrameId: number | null = null;
 
+    const cancelFade = () => {
+      if (fadeFrameId !== null) {
+        cancelAnimationFrame(fadeFrameId);
+        fadeFrameId = null;
+      }
+    };
+
+    // Smoothly fade out and stop when player leaves Main Menu to start any chapter
     if (hud.phase !== 'title') {
-      bgm.pause();
-      bgm.currentTime = 0;
       setTitleBgmBlocked(false);
-      return;
+      if (bgm.paused) {
+        bgm.currentTime = 0;
+        return;
+      }
+      const startVol = bgm.volume;
+      const startTime = performance.now();
+      const fadeMs = 280;
+      const stepFadeOut = (now: number) => {
+        if (cancelled) return;
+        const t = Math.min(1, (now - startTime) / fadeMs);
+        bgm.volume = Math.max(0, startVol * (1 - t));
+        if (t < 1) {
+          fadeFrameId = requestAnimationFrame(stepFadeOut);
+        } else {
+          fadeFrameId = null;
+          bgm.pause();
+          bgm.currentTime = 0;
+        }
+      };
+      fadeFrameId = requestAnimationFrame(stepFadeOut);
+      return () => {
+        cancelled = true;
+        cancelFade();
+      };
     }
+
+    bgm.muted = settings.muted;
+    bgm.volume = targetVol;
 
     if (settings.muted || targetVol <= 0.001) {
       bgm.pause();
@@ -363,47 +399,84 @@ export default function App() {
       return;
     }
 
-    let cancelled = false;
-    const tryPlay = () => {
+    let unlockArmed = false;
+
+    const removeUnlockListeners = () => {
+      if (!unlockArmed) return;
+      unlockArmed = false;
+      document.removeEventListener('touchstart', handleFirstInteraction, true);
+      document.removeEventListener('pointerdown', handleFirstInteraction, true);
+      document.removeEventListener('click', handleFirstInteraction, true);
+      document.removeEventListener('keydown', handleFirstInteraction, true);
+    };
+
+    const armFirstTouchUnlock = () => {
+      if (unlockArmed || cancelled) return;
+      unlockArmed = true;
+      document.addEventListener('touchstart', handleFirstInteraction, {
+        capture: true,
+        passive: true,
+      });
+      document.addEventListener('pointerdown', handleFirstInteraction, {
+        capture: true,
+        passive: true,
+      });
+      document.addEventListener('click', handleFirstInteraction, { capture: true });
+      document.addEventListener('keydown', handleFirstInteraction, { capture: true });
+    };
+
+    const attemptPlay = () => {
       if (cancelled || document.hidden) return;
+      bgm.muted = false;
+      bgm.volume = targetVol;
       const playPromise = bgm.play();
       if (playPromise && typeof playPromise.then === 'function') {
         playPromise
           .then(() => {
-            if (!cancelled) setTitleBgmBlocked(false);
+            if (cancelled) {
+              bgm.pause();
+              return;
+            }
+            setTitleBgmBlocked(false);
+            removeUnlockListeners();
           })
           .catch(() => {
-            if (!cancelled) setTitleBgmBlocked(true);
+            if (!cancelled) {
+              setTitleBgmBlocked(true);
+              armFirstTouchUnlock();
+            }
           });
       }
     };
 
-    tryPlay();
-
-    const unlockOnGesture = () => {
-      if (bgm.paused && !settings.muted && hud.phase === 'title') {
-        tryPlay();
+    function handleFirstInteraction() {
+      if (!bgm || cancelled || settings.muted || hud.phase !== 'title') {
+        removeUnlockListeners();
+        return;
       }
-    };
+      if (!bgm.paused) {
+        setTitleBgmBlocked(false);
+        removeUnlockListeners();
+        return;
+      }
+      attemptPlay();
+    }
 
     const handleVisibility = () => {
       if (document.hidden) {
         bgm.pause();
-      } else if (hud.phase === 'title' && !settings.muted) {
-        tryPlay();
+      } else if (!cancelled && hud.phase === 'title' && !settings.muted) {
+        attemptPlay();
       }
     };
 
-    window.addEventListener('pointerdown', unlockOnGesture, { capture: true, passive: true });
-    window.addEventListener('touchstart', unlockOnGesture, { capture: true, passive: true });
-    window.addEventListener('keydown', unlockOnGesture, { capture: true });
+    attemptPlay();
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelled = true;
-      window.removeEventListener('pointerdown', unlockOnGesture, true);
-      window.removeEventListener('touchstart', unlockOnGesture, true);
-      window.removeEventListener('keydown', unlockOnGesture, true);
+      cancelFade();
+      removeUnlockListeners();
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [hud.phase, settings.muted, settings.volume]);
